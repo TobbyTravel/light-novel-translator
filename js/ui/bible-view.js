@@ -3,6 +3,7 @@ import { runExtraction, detectDuplicates, mergeDuplicateRecords, planExtractionB
 import { extractionSystemPrompt, extractionUserPrompt } from '../prompts.js';
 import { estimateCallTokens, formatTokenCount } from '../tokens.js';
 import { runSynthesis, planSynthesisRun } from '../synthesis.js';
+import { renderRefusalPanel } from './refusal-panel.js';
 
 const TABS = [
   { key: 'characters', label: 'Characters', fields: ['sourceName', 'englishName', 'aliases', 'honorifics', 'speechStyle', 'role', 'notes'], hasEvidence: true },
@@ -40,6 +41,7 @@ export function renderBibleView(container, { projectId, settings }) {
       </div>
       <details id="token-panel"><summary>Token usage per chapter (estimated / actual)</summary></details>
       <div id="synthesis-panel"></div>
+      <div id="refusal-panel-extraction"></div>
       <div id="duplicates-panel"></div>
       <div class="tabs" id="bible-tabs"></div>
       <div id="bible-tab-content"></div>
@@ -330,4 +332,5 @@ export function renderBibleView(container, { projectId, settings }) {
   renderDuplicates();
   renderSynthesisPanel();
   renderTokenPanel();
+  renderRefusalPanel(container.querySelector('#refusal-panel-extraction'), { projectId, settings, kind: 'extraction' });
 }

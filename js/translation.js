@@ -75,6 +75,7 @@ async function translateBatch({ batch, bible, system, settings, onChapterError, 
         promptTokens,
         completionTokens,
         translationBatchSize: 1,
+        translationModel: settings.model,
       });
       return;
     }
@@ -89,6 +90,7 @@ async function translateBatch({ batch, bible, system, settings, onChapterError, 
           promptTokens,
           completionTokens,
           translationBatchSize: batch.length,
+          translationModel: settings.model,
         });
       }
     } else {
@@ -101,6 +103,7 @@ async function translateBatch({ batch, bible, system, settings, onChapterError, 
         promptTokens,
         completionTokens,
         translationBatchSize: batch.length,
+        translationModel: settings.model,
       });
       for (const chapter of batch.slice(1)) {
         await db.put('chapters', { ...chapter, status: 'failed' });

@@ -21,6 +21,10 @@ export function renderSettingsView(container, { projectId, settings, onChange })
         <input type="number" id="s-batch-fill" value="${settings.batchFillTarget}" min="10" max="100" step="5" />
       </label>
       <p class="muted">When running extraction/translation on all chapters, consecutive chapters are auto-batched into one call until they'd use this percentage of the context budget, leaving headroom for the model's own output.</p>
+      <label>Fallback models</label>
+      <div id="s-fallback-list"></div>
+      <button id="s-fallback-add" type="button">+ Add fallback model</button>
+      <p class="muted">Tried in order, on your request, when the refusal crosscheck flags a chapter (suspected censorship/refusal instead of a real translation/extraction).</p>
       <p id="s-status" class="muted"></p>
       <hr/>
       <div class="row">
@@ -33,6 +37,32 @@ export function renderSettingsView(container, { projectId, settings, onChange })
 
   const el = (id) => container.querySelector(id);
   const statusEl = el('#s-status');
+  const fallbackListEl = el('#s-fallback-list');
+
+  function renderFallbackList() {
+    fallbackListEl.innerHTML = (settings.fallbackModels || []).map((m, i) => `
+      <div class="row fallback-row" data-idx="${i}">
+        <input type="text" class="fallback-input" list="s-model-list" value="${m}" />
+        <button type="button" class="fallback-remove">Remove</button>
+      </div>
+    `).join('') || '<p class="muted">No fallback models configured.</p>';
+
+    fallbackListEl.querySelectorAll('.fallback-input').forEach((input) => {
+      input.addEventListener('change', async () => {
+        const idx = Number(input.closest('.fallback-row').dataset.idx);
+        settings.fallbackModels[idx] = input.value.trim();
+        await persist();
+      });
+    });
+    fallbackListEl.querySelectorAll('.fallback-remove').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const idx = Number(btn.closest('.fallback-row').dataset.idx);
+        settings.fallbackModels.splice(idx, 1);
+        await persist();
+        renderFallbackList();
+      });
+    });
+  }
 
   async function persist() {
     settings.ollamaHost = el('#s-host').value.trim() || 'http://localhost:11434';
@@ -48,6 +78,15 @@ export function renderSettingsView(container, { projectId, settings, onChange })
   ['#s-host', '#s-model', '#s-source', '#s-target', '#s-context-budget', '#s-batch-fill'].forEach((sel) => {
     el(sel).addEventListener('change', persist);
   });
+
+  el('#s-fallback-add').addEventListener('click', async () => {
+    settings.fallbackModels = settings.fallbackModels || [];
+    settings.fallbackModels.push('');
+    await persist();
+    renderFallbackList();
+  });
+
+  renderFallbackList();
 
   el('#s-refresh-models').addEventListener('click', async () => {
     statusEl.textContent = 'Checking...';

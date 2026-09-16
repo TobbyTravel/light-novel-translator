@@ -255,6 +255,10 @@ export async function runExtraction({ projectId, chapters, settings, onProgress,
           extractionPromptTokens: promptTokens,
           extractionCompletionTokens: completionTokens,
           extractionBatchSize: batch.length,
+          extractionModel: settings.model,
+          // Kept purely so a later refusal crosscheck (js/crosscheck.js) has
+          // something to scan - extraction itself never reads this back.
+          extractionRawResponse: raw,
         });
       }
       onProgress?.({ index: b, total: batches.length, chapter: batch[0], batch, promptTokens, completionTokens });
@@ -265,4 +269,36 @@ export async function runExtraction({ projectId, chapters, settings, onProgress,
     }
   }
   onProgress?.({ index: batches.length, total: batches.length, done: true });
+}
+
+// Re-runs extraction for a single chapter (e.g. after a refusal-crosscheck
+// retry with a fallback model) - always a batch of one, mirroring
+// translation.js's retranslateChapter. Merges into the bible exactly like
+// the main run (matched by name), so this simply overwrites/extends this
+// chapter's contribution rather than needing special-case logic.
+export async function retryExtractionChapter({ projectId, chapter, settings }) {
+  const chapterTitles = [chapter.title];
+  const system = extractionSystemPrompt({ sourceLanguage: settings.sourceLanguage, chapterTitles });
+  const prompt = extractionUserPrompt({ chapters: [chapter] });
+  const { text: raw, promptTokens, completionTokens } = await chat({
+    host: settings.ollamaHost,
+    model: settings.model,
+    system,
+    prompt,
+  });
+  const fragment = extractJson(raw);
+  await mergeCharacters(projectId, fragment.characters, [chapter]);
+  await mergeRelationships(projectId, fragment.relationships, [chapter]);
+  await mergeLocations(projectId, fragment.locations, [chapter]);
+  await mergeTerminology(projectId, fragment.terminology, [chapter]);
+  await addTimelineEntries(projectId, [chapter], fragment.timelineEntries);
+  await db.put('chapters', {
+    ...chapter,
+    extractionPromptTokens: promptTokens,
+    extractionCompletionTokens: completionTokens,
+    extractionBatchSize: 1,
+    extractionModel: settings.model,
+    extractionRawResponse: raw,
+  });
+  return raw;
 }

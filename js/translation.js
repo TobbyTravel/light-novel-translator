@@ -57,7 +57,7 @@ export async function runTranslation({ projectId, chapters, settings, onProgress
   onProgress?.({ index: batches.length, total: batches.length, done: true });
 }
 
-async function translateBatch({ batch, bible, system, settings, onChapterError, batchIndex }) {
+export async function translateBatch({ batch, bible, system, settings, onChapterError, batchIndex }) {
   try {
     const prompt = translationPrompt(bible, batch);
     const { text, promptTokens, completionTokens } = await chat({

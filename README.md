@@ -1,5 +1,11 @@
 # Light Novel Translator
 
+![License](https://img.shields.io/badge/license-MIT-blue)
+![Status](https://img.shields.io/badge/status-early%20%2F%20active-yellow)
+![Stack](https://img.shields.io/badge/stack-vanilla%20JS%2C%20no%20build%20step-informational)
+![Backend](https://img.shields.io/badge/backend-none%20%2F%20local--first-success)
+![Powered by](https://img.shields.io/badge/powered%20by-Ollama-black)
+
 A local-first, browser-based tool for translating long-form fiction (light
 novels, web novels, or any long narrative text) with a self-hosted
 [Ollama](https://ollama.com) model — while actually keeping track of who's

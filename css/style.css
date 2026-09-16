@@ -34,6 +34,15 @@ nav {
 .nav-btn.active { border-color: var(--accent); color: var(--accent); }
 button:hover { border-color: var(--accent); }
 
+.btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: white;
+  font-weight: 600;
+}
+.btn-primary:hover { background: #3a6ae0; }
+.btn-primary:disabled { background: #8888; border-color: var(--border); color: inherit; font-weight: normal; }
+
 .panel { display: flex; flex-direction: column; gap: 0.75rem; }
 
 label { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.95em; }

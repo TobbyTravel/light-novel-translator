@@ -72,7 +72,6 @@ async function mergeCharacters(projectId, characters, chapters) {
       role: c.role ?? match?.role ?? '',
       notes: appendNote(match?.notes, batchLabel(chapters), c.notes),
       evidence: appendEvidence(match?.evidence, c.sourceEvidence, chapters),
-      approved: match?.approved ?? false,
     };
     await db.put('characters', record);
     if (!match) existing.push(record);
@@ -114,7 +113,6 @@ async function mergeLocations(projectId, locations, chapters) {
       englishName: match?.englishName || l.englishName || '',
       description: l.description ?? match?.description ?? '',
       evidence: appendEvidence(match?.evidence, l.sourceEvidence, chapters),
-      approved: match?.approved ?? false,
     };
     await db.put('locations', record);
     if (!match) existing.push(record);
@@ -134,7 +132,6 @@ async function mergeTerminology(projectId, terminology, chapters) {
       category: t.category ?? match?.category ?? '',
       notes: appendNote(match?.notes, batchLabel(chapters), t.notes),
       evidence: appendEvidence(match?.evidence, t.sourceEvidence, chapters),
-      approved: match?.approved ?? false,
     };
     await db.put('terminology', record);
     if (!match) existing.push(record);
@@ -189,6 +186,52 @@ export async function detectDuplicates(projectId) {
   return results;
 }
 
+const DUPLICATE_NAME_FIELD = { characters: 'sourceName', locations: 'sourceName', terminology: 'sourceTerm' };
+
+// Best-guess canonical pick with no model call: prefers the fuller/longer
+// name as canonical (e.g. "奈島寧" over "寧" - a bare given name is more
+// likely a shortened form used in dialogue than the other way around),
+// tie-broken by whichever record has more supporting evidence quotes.
+export function pickCanonicalHeuristic(store, a, b) {
+  const field = DUPLICATE_NAME_FIELD[store];
+  const lenA = (a[field] || '').length;
+  const lenB = (b[field] || '').length;
+  if (lenA !== lenB) return lenA > lenB ? [a, b] : [b, a];
+  const evA = (a.evidence || []).length;
+  const evB = (b.evidence || []).length;
+  return evA >= evB ? [a, b] : [b, a];
+}
+
+function evidenceExcerpt(record) {
+  return (record.evidence || []).slice(0, 3).map((e) => e.quote).filter(Boolean);
+}
+
+// Asks the local model which of two likely-duplicate records is the fuller/
+// canonical form, so "auto-resolve all" can act without asking the user per
+// pair. Falls back to the local heuristic on any error or unparseable
+// response - this is a best-guess convenience, never a blocking dependency.
+export async function pickCanonicalWithAI(store, a, b, settings) {
+  if (!settings?.model) return pickCanonicalHeuristic(store, a, b);
+  const field = DUPLICATE_NAME_FIELD[store];
+  try {
+    const system = 'You resolve duplicate entries in a story bible. Reply with strict JSON only: {"canonical": "a" | "b"}. No other text.';
+    const prompt = [
+      `Two entries in a ${store} list may refer to the same one - pick which name is the fuller/more complete canonical form (the other will be kept as an alias).`,
+      `A: "${a[field] || ''}" - aliases: ${(a.aliases || []).join(', ') || 'none'} - notes: ${a.notes || 'none'}`,
+      `  evidence: ${evidenceExcerpt(a).map((q) => `"${q}"`).join(' / ') || 'none'}`,
+      `B: "${b[field] || ''}" - aliases: ${(b.aliases || []).join(', ') || 'none'} - notes: ${b.notes || 'none'}`,
+      `  evidence: ${evidenceExcerpt(b).map((q) => `"${q}"`).join(' / ') || 'none'}`,
+    ].join('\n');
+    const { text } = await chat({ host: settings.ollamaHost, model: settings.model, system, prompt });
+    const parsed = extractJson(text);
+    if (parsed?.canonical === 'a') return [a, b];
+    if (parsed?.canonical === 'b') return [b, a];
+    return pickCanonicalHeuristic(store, a, b);
+  } catch {
+    return pickCanonicalHeuristic(store, a, b);
+  }
+}
+
 export async function mergeDuplicateRecords(store, keepRecord, dropRecord) {
   const merged = {
     ...keepRecord,
@@ -226,9 +269,10 @@ export function planExtractionBatches(chapters, settings) {
 // INDEPENDENTLY (no prior bible state is shown to the model - see
 // js/prompts.js); merging into the running bible happens afterward, in
 // plain code, in this file.
-export async function runExtraction({ projectId, chapters, settings, onProgress, onChapterError }) {
+export async function runExtraction({ projectId, chapters, settings, onProgress, onChapterError, signal }) {
   const batches = planExtractionBatches(chapters, settings);
   for (let b = 0; b < batches.length; b++) {
+    if (signal?.aborted) break;
     const batch = batches[b];
     onProgress?.({ index: b, total: batches.length, chapter: batch[0], batch, batchIndex: b, totalBatches: batches.length });
     try {
@@ -242,6 +286,7 @@ export async function runExtraction({ projectId, chapters, settings, onProgress,
         model: settings.model,
         system,
         prompt,
+        signal,
       });
       const fragment = extractJson(raw);
       await mergeCharacters(projectId, fragment.characters, batch);
@@ -263,12 +308,13 @@ export async function runExtraction({ projectId, chapters, settings, onProgress,
       }
       onProgress?.({ index: b, total: batches.length, chapter: batch[0], batch, promptTokens, completionTokens });
     } catch (err) {
+      if (err.name === 'AbortError') break;
       for (const chapter of batch) {
         onChapterError?.({ index: b, chapter, error: err });
       }
     }
   }
-  onProgress?.({ index: batches.length, total: batches.length, done: true });
+  onProgress?.({ index: batches.length, total: batches.length, done: true, aborted: !!signal?.aborted });
 }
 
 // Re-runs extraction for a single chapter (e.g. after a refusal-crosscheck

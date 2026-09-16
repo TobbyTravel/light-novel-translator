@@ -5,13 +5,19 @@ import { estimateCallTokens, formatTokenCount } from '../tokens.js';
 import { loadBibleAsPlainObject } from '../extraction.js';
 import { joinChaptersWithMarkers } from '../grouping.js';
 import { renderRefusalPanel } from './refusal-panel.js';
+import { createEtaTracker } from '../eta.js';
+
+function escapeHtml(str) {
+  return String(str ?? '').replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+}
 
 export function renderTranslateView(container, { projectId, settings }) {
   container.innerHTML = `
     <section class="panel">
       <h2>3. Translate</h2>
       <div class="row">
-        <button id="run-translation">Translate all chapters</button>
+        <button id="run-translation" class="btn-primary">Translate all chapters</button>
+        <button id="stop-translation" hidden>Stop</button>
         <span id="translation-status" class="muted"></span>
       </div>
       <div id="chapter-status-list"></div>
@@ -40,7 +46,7 @@ export function renderTranslateView(container, { projectId, settings }) {
       return batch.map((c, i) => `
         <tr class="${stripe} ${overBudget ? 'over-budget' : ''}" data-id="${c.id}">
           <td>${c.index + 1}</td>
-          <td>${c.title}${grouped ? ` <span class="muted">(batch of ${batch.length})</span>` : ''}</td>
+          <td>${escapeHtml(c.title)}${grouped ? ` <span class="muted">(batch of ${batch.length})</span>` : ''}</td>
           <td class="status-${c.status}">${c.status}</td>
           <td>${i === 0 ? (actual != null ? `${formatTokenCount(actual)} actual` : `~${formatTokenCount(estimated)} est.`) : '<span class="muted">shares batch above</span>'}${overBudget && i === 0 ? ' ⚠' : ''}</td>
           <td><button class="retranslate-btn" data-id="${c.id}">Retranslate</button></td>
@@ -65,8 +71,20 @@ export function renderTranslateView(container, { projectId, settings }) {
     });
   }
 
-  container.querySelector('#run-translation').addEventListener('click', async () => {
+  const runBtn = container.querySelector('#run-translation');
+  const stopBtn = container.querySelector('#stop-translation');
+
+  runBtn.addEventListener('click', async () => {
     if (!settings.model) return alert('Set an Ollama model name in Settings first.');
+    runBtn.disabled = true;
+    stopBtn.hidden = false;
+    const controller = new AbortController();
+    stopBtn.onclick = () => {
+      stopBtn.disabled = true;
+      controller.abort();
+    };
+    const originalTitle = document.title;
+    const eta = createEtaTracker();
     const chapters = (await db.allByProject('chapters', projectId)).sort((a, b) => a.index - b.index);
     statusEl.textContent = 'Running...';
     let failed = 0;
@@ -74,17 +92,28 @@ export function renderTranslateView(container, { projectId, settings }) {
       projectId,
       chapters,
       settings,
-      onProgress: ({ index, total, batch, done, estimatedTokens }) => {
+      signal: controller.signal,
+      onProgress: ({ index, total, batch, done, estimatedTokens, aborted }) => {
         const batchLabel = batch && batch.length > 1 ? `${batch.length} chapters (${batch[0].title} .. ${batch[batch.length - 1].title})` : batch?.[0]?.title;
-        statusEl.textContent = done
-          ? `Done (${failed} chapter(s) failed)`
-          : `Batch ${index + 1}/${total}: ${batchLabel} (~${formatTokenCount(estimatedTokens)} tokens est.)`;
+        if (done) {
+          statusEl.textContent = aborted
+            ? `Stopped by request (${index}/${total} batches done, ${failed} failed).`
+            : `Done (${failed} chapter(s) failed)`;
+          document.title = originalTitle;
+          return;
+        }
+        const remaining = eta.estimate(index, total - index);
+        statusEl.textContent = `Batch ${index + 1}/${total}: ${batchLabel} (~${formatTokenCount(estimatedTokens)} tokens est.)${remaining ? ` - ${remaining}` : ''}`;
+        document.title = `[${index + 1}/${total}] ${originalTitle}`;
       },
       onChapterError: ({ chapter, error }) => {
         failed++;
         console.error(`Translation failed for "${chapter.title}"`, error);
       },
     });
+    runBtn.disabled = false;
+    stopBtn.hidden = true;
+    stopBtn.disabled = false;
     await renderList();
   });
 

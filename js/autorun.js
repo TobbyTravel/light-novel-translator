@@ -9,48 +9,57 @@ import { runTranslation } from './translation.js';
 // continues) - this wrapper additionally makes sure a whole STAGE failing
 // outright (e.g. synthesis erroring because a prior stage produced nothing)
 // doesn't stop later stages from at least attempting to run.
-export async function runAutoPipeline({ projectId, settings, onProgress }) {
+export async function runAutoPipeline({ projectId, settings, onProgress, signal }) {
   const stageErrors = [];
 
-  onProgress?.({ stage: 'extraction' });
-  try {
-    const chapters = (await db.allByProject('chapters', projectId)).sort((a, b) => a.index - b.index);
-    await runExtraction({
-      projectId,
-      chapters,
-      settings,
-      onProgress: (p) => onProgress?.({ stage: 'extraction', ...p }),
-      onChapterError: (e) => onProgress?.({ stage: 'extraction', chapterError: e }),
-    });
-  } catch (err) {
-    stageErrors.push({ stage: 'extraction', error: err });
+  if (!signal?.aborted) {
+    onProgress?.({ stage: 'extraction' });
+    try {
+      const chapters = (await db.allByProject('chapters', projectId)).sort((a, b) => a.index - b.index);
+      await runExtraction({
+        projectId,
+        chapters,
+        settings,
+        signal,
+        onProgress: (p) => onProgress?.({ stage: 'extraction', ...p }),
+        onChapterError: (e) => onProgress?.({ stage: 'extraction', chapterError: e }),
+      });
+    } catch (err) {
+      if (err.name !== 'AbortError') stageErrors.push({ stage: 'extraction', error: err });
+    }
   }
 
-  onProgress?.({ stage: 'synthesis' });
-  try {
-    await runSynthesis({
-      projectId,
-      settings,
-      onProgress: (p) => onProgress?.({ stage: 'synthesis', ...p }),
-    });
-  } catch (err) {
-    stageErrors.push({ stage: 'synthesis', error: err });
+  if (!signal?.aborted) {
+    onProgress?.({ stage: 'synthesis' });
+    try {
+      await runSynthesis({
+        projectId,
+        settings,
+        signal,
+        onProgress: (p) => onProgress?.({ stage: 'synthesis', ...p }),
+      });
+    } catch (err) {
+      if (err.name !== 'AbortError') stageErrors.push({ stage: 'synthesis', error: err });
+    }
   }
 
-  onProgress?.({ stage: 'translation' });
-  try {
-    const chapters = (await db.allByProject('chapters', projectId)).sort((a, b) => a.index - b.index);
-    await runTranslation({
-      projectId,
-      chapters,
-      settings,
-      onProgress: (p) => onProgress?.({ stage: 'translation', ...p }),
-      onChapterError: (e) => onProgress?.({ stage: 'translation', chapterError: e }),
-    });
-  } catch (err) {
-    stageErrors.push({ stage: 'translation', error: err });
+  if (!signal?.aborted) {
+    onProgress?.({ stage: 'translation' });
+    try {
+      const chapters = (await db.allByProject('chapters', projectId)).sort((a, b) => a.index - b.index);
+      await runTranslation({
+        projectId,
+        chapters,
+        settings,
+        signal,
+        onProgress: (p) => onProgress?.({ stage: 'translation', ...p }),
+        onChapterError: (e) => onProgress?.({ stage: 'translation', chapterError: e }),
+      });
+    } catch (err) {
+      if (err.name !== 'AbortError') stageErrors.push({ stage: 'translation', error: err });
+    }
   }
 
-  onProgress?.({ stage: 'done', stageErrors });
+  onProgress?.({ stage: 'done', stageErrors, aborted: !!signal?.aborted });
   return { stageErrors };
 }

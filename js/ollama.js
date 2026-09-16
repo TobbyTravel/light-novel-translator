@@ -36,7 +36,7 @@ export async function listModels(host) {
 // Ollama's own accounting (prompt_eval_count/eval_count on the final
 // streamed line) - they're undefined if an Ollama version omits them, and
 // callers should fall back to the heuristic estimator in js/tokens.js.
-export async function chat({ host, model, system, prompt, onToken, format }) {
+export async function chat({ host, model, system, prompt, onToken, format, signal }) {
   const url = `${host.replace(/\/$/, '')}/api/chat`;
   const body = {
     model,
@@ -54,8 +54,10 @@ export async function chat({ host, model, system, prompt, onToken, format }) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
+      signal,
     });
   } catch (err) {
+    if (err.name === 'AbortError') throw err;
     throw friendlyConnectError(host);
   }
 
@@ -72,14 +74,25 @@ export async function chat({ host, model, system, prompt, onToken, format }) {
   let completionTokens;
 
   while (true) {
-    const { done, value } = await reader.read();
+    let done, value;
+    try {
+      ({ done, value } = await reader.read());
+    } catch (err) {
+      if (err.name === 'AbortError') throw err;
+      throw new OllamaError(`Lost connection to Ollama mid-response: ${err.message}`, err);
+    }
     if (done) break;
     buffer += decoder.decode(value, { stream: true });
     const lines = buffer.split('\n');
     buffer = lines.pop();
     for (const line of lines) {
       if (!line.trim()) continue;
-      const chunk = JSON.parse(line);
+      let chunk;
+      try {
+        chunk = JSON.parse(line);
+      } catch (err) {
+        throw new OllamaError(`Ollama sent an unparseable response line: ${line.slice(0, 200)}`, err);
+      }
       if (chunk.message?.content) {
         full += chunk.message.content;
         if (onToken) onToken(chunk.message.content, full);

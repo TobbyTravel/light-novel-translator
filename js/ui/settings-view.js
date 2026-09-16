@@ -111,10 +111,22 @@ export function renderSettingsView(container, { projectId, settings, onChange })
   el('#import-project').addEventListener('change', async (e) => {
     const file = e.target.files[0];
     if (!file) return;
-    const { importProject } = await import('../storage.js');
-    const data = JSON.parse(await file.text());
-    const newProjectId = await importProject(data);
-    location.hash = `#/project/${newProjectId}`;
-    location.reload();
+    let data;
+    try {
+      data = JSON.parse(await file.text());
+    } catch (err) {
+      statusEl.textContent = `That doesn't look like a valid project file (bad JSON: ${err.message}).`;
+      e.target.value = '';
+      return;
+    }
+    try {
+      const { importProject } = await import('../storage.js');
+      const newProjectId = await importProject(data);
+      location.hash = `#/project/${newProjectId}`;
+      location.reload();
+    } catch (err) {
+      statusEl.textContent = `Couldn't import that file: ${err.message}`;
+      e.target.value = '';
+    }
   });
 }

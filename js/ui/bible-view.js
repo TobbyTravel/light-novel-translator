@@ -1,10 +1,11 @@
 import { db, ENTITY_STORES } from '../storage.js';
-import { runExtraction, detectDuplicates, mergeDuplicateRecords, planExtractionBatches } from '../extraction.js';
+import { runExtraction, detectDuplicates, mergeDuplicateRecords, planExtractionBatches, pickCanonicalWithAI } from '../extraction.js';
 import { extractionSystemPrompt, extractionUserPrompt } from '../prompts.js';
 import { estimateCallTokens, formatTokenCount } from '../tokens.js';
 import { runSynthesis, planSynthesisRun } from '../synthesis.js';
 import { renderRefusalPanel } from './refusal-panel.js';
 import { runAutoPipeline } from '../autorun.js';
+import { createEtaTracker } from '../eta.js';
 
 const TABS = [
   { key: 'characters', label: 'Characters', fields: ['sourceName', 'englishName', 'aliases', 'honorifics', 'speechStyle', 'role', 'notes'], hasEvidence: true },
@@ -38,13 +39,15 @@ export function renderBibleView(container, { projectId, settings }) {
       <h2>2. Story bible</h2>
       <div class="panel autorun-box">
         <div class="row">
-          <button id="run-all">Run all (extraction → synthesis → translation)</button>
+          <button id="run-all" class="btn-primary">Run all (extraction → synthesis → translation)</button>
+          <button id="stop-all" hidden>Stop</button>
           <span id="autorun-status" class="muted"></span>
         </div>
         <p class="muted">Runs everything except epub export, so it's ready when you get back. Chapter/batch failures are logged and skipped rather than stopping the run.</p>
       </div>
       <div class="row">
         <button id="run-extraction">Run extraction pass on all chapters</button>
+        <button id="stop-extraction" hidden>Stop</button>
         <span id="extraction-status" class="muted"></span>
       </div>
       <details id="token-panel"><summary>Token usage per chapter (estimated / actual)</summary></details>
@@ -185,7 +188,6 @@ export function renderBibleView(container, { projectId, settings }) {
         <thead><tr>
           ${tab.hasEvidence ? '<th>grounded</th>' : ''}
           ${tab.fields.map((f) => `<th>${f}</th>`).join('')}
-          ${tab.key !== 'timeline' ? '<th>approved</th>' : ''}
         </tr></thead>
         <tbody>
           ${records.map((r) => `
@@ -195,10 +197,9 @@ export function renderBibleView(container, { projectId, settings }) {
                   ${isVerified(r.evidence) ? '✓' : '⚠'}
                 </span>
               </td>` : ''}
-              ${tab.fields.map((f) => `<td contenteditable="true" data-field="${f}">${formatField(r[f])}</td>`).join('')}
-              ${tab.key !== 'timeline' ? `<td><input type="checkbox" data-field="approved" ${r.approved ? 'checked' : ''}/></td>` : ''}
+              ${tab.fields.map((f) => `<td contenteditable="true" data-field="${f}">${escapeHtml(formatField(r[f]))}</td>`).join('')}
             </tr>
-            ${tab.hasEvidence ? `<tr class="evidence-row" data-evidence-for="${r.id}" hidden><td colspan="${tab.fields.length + 2}">${evidenceSummary(r.evidence)}</td></tr>` : ''}
+            ${tab.hasEvidence ? `<tr class="evidence-row" data-evidence-for="${r.id}" hidden><td colspan="${tab.fields.length + 1}">${evidenceSummary(r.evidence)}</td></tr>` : ''}
           `).join('')}
         </tbody>
       </table>
@@ -223,16 +224,6 @@ export function renderBibleView(container, { projectId, settings }) {
         await db.put(tab.key, record);
       });
     });
-
-    contentEl.querySelectorAll('input[type=checkbox][data-field=approved]').forEach((box) => {
-      box.addEventListener('change', async () => {
-        const row = box.closest('tr');
-        const id = row.dataset.id;
-        const record = records.find((r) => r.id === id);
-        record.approved = box.checked;
-        await db.put(tab.key, record);
-      });
-    });
   }
 
   function formatField(value) {
@@ -247,9 +238,10 @@ export function renderBibleView(container, { projectId, settings }) {
     return text.trim();
   }
 
+  const nameField = { characters: 'sourceName', locations: 'sourceName', terminology: 'sourceTerm' };
+
   async function renderDuplicates() {
     const dupes = await detectDuplicates(projectId);
-    const nameField = { characters: 'sourceName', locations: 'sourceName', terminology: 'sourceTerm' };
     const allPairs = Object.entries(dupes).flatMap(([store, pairs]) => pairs.map((p) => ({ store, pairs: p })));
     if (allPairs.length === 0) {
       duplicatesEl.innerHTML = '';
@@ -257,7 +249,11 @@ export function renderBibleView(container, { projectId, settings }) {
     }
     duplicatesEl.innerHTML = `
       <div class="panel duplicates-box">
-        <strong>Possible duplicates (${allPairs.length})</strong> - not merged automatically, review each:
+        <div class="row">
+          <strong>Possible duplicates (${allPairs.length})</strong>
+          <button id="auto-resolve-dupes">Auto-resolve all (best guess)</button>
+        </div>
+        <p class="muted">Or review each individually:</p>
         ${allPairs.map(({ store, pairs: [a, b] }, i) => `
           <div class="row dup-row">
             <span>${escapeHtml(a[nameField[store]])} &harr; ${escapeHtml(b[nameField[store]])} (${store})</span>
@@ -277,7 +273,24 @@ export function renderBibleView(container, { projectId, settings }) {
         if (activeTab === store) await renderContent();
       });
     });
+    duplicatesEl.querySelector('#auto-resolve-dupes').addEventListener('click', async () => {
+      const btn = duplicatesEl.querySelector('#auto-resolve-dupes');
+      btn.disabled = true;
+      btn.textContent = settings.model ? 'Resolving via AI...' : 'Resolving...';
+      for (const { store, pairs: [a, b] } of allPairs) {
+        const keepRecord = await db.get(store, a.id);
+        const dropRecord = await db.get(store, b.id);
+        if (!keepRecord || !dropRecord) continue; // already merged as part of an earlier pair this pass
+        const [keep, drop] = await pickCanonicalWithAI(store, keepRecord, dropRecord, settings);
+        await mergeDuplicateRecords(store, keep, drop);
+      }
+      await renderDuplicates();
+      await renderContent();
+    });
   }
+
+  const stopAllBtn = container.querySelector('#stop-all');
+  const stopExtractionBtn = container.querySelector('#stop-extraction');
 
   runAllBtn.addEventListener('click', async () => {
     if (!settings.model) {
@@ -285,6 +298,13 @@ export function renderBibleView(container, { projectId, settings }) {
       return;
     }
     runAllBtn.disabled = true;
+    stopAllBtn.hidden = false;
+    const controller = new AbortController();
+    stopAllBtn.onclick = () => {
+      stopAllBtn.disabled = true;
+      stopAllBtn.textContent = 'Stopping...';
+      controller.abort();
+    };
     const originalTitle = document.title;
     let wakeLock = null;
     try {
@@ -297,12 +317,15 @@ export function renderBibleView(container, { projectId, settings }) {
     await runAutoPipeline({
       projectId,
       settings,
+      signal: controller.signal,
       onProgress: (p) => {
         let label;
         if (p.stage === 'done') {
-          label = p.stageErrors.length > 0
-            ? `Done, with ${p.stageErrors.length} stage-level error(s) - check console.`
-            : 'Done - extraction, synthesis, and translation all complete.';
+          label = p.aborted
+            ? 'Stopped by request. Whatever finished so far is kept - re-run to continue.'
+            : p.stageErrors.length > 0
+              ? `Done, with ${p.stageErrors.length} stage-level error(s) - check console.`
+              : 'Done - extraction, synthesis, and translation all complete.';
         } else if (p.done) {
           label = `${p.stage} complete.`;
         } else if (p.chapter || p.batch) {
@@ -321,17 +344,30 @@ export function renderBibleView(container, { projectId, settings }) {
     document.title = originalTitle;
     wakeLock?.release?.().catch(() => {});
     runAllBtn.disabled = false;
+    stopAllBtn.hidden = true;
+    stopAllBtn.disabled = false;
+    stopAllBtn.textContent = 'Stop';
     await renderContent();
     await renderDuplicates();
     await renderTokenPanel();
     await renderSynthesisPanel();
   });
 
-  container.querySelector('#run-extraction').addEventListener('click', async () => {
+  container.querySelector('#run-extraction').addEventListener('click', async (e) => {
     if (!settings.model) {
       alert('Set an Ollama model name in Settings first.');
       return;
     }
+    const runBtn = e.currentTarget;
+    runBtn.disabled = true;
+    stopExtractionBtn.hidden = false;
+    const controller = new AbortController();
+    stopExtractionBtn.onclick = () => {
+      stopExtractionBtn.disabled = true;
+      controller.abort();
+    };
+    const originalTitle = document.title;
+    const eta = createEtaTracker();
     const chapters = await db.allByProject('chapters', projectId);
     chapters.sort((a, b) => a.index - b.index);
     statusEl.textContent = 'Running...';
@@ -340,15 +376,22 @@ export function renderBibleView(container, { projectId, settings }) {
       projectId,
       chapters,
       settings,
-      onProgress: async ({ index, total, batch, done, estimatedTokens, promptTokens }) => {
+      signal: controller.signal,
+      onProgress: async ({ index, total, batch, done, estimatedTokens, promptTokens, aborted }) => {
         const batchLabel = batch && batch.length > 1 ? `${batch.length} chapters (${batch[0].title} .. ${batch[batch.length - 1].title})` : batch?.[0]?.title;
         if (done) {
-          statusEl.textContent = `Done (${errors.length} chapter(s) failed)`;
+          statusEl.textContent = aborted
+            ? `Stopped by request (${index}/${total} batches done, ${errors.length} failed).`
+            : `Done (${errors.length} chapter(s) failed)`;
+          document.title = originalTitle;
         } else if (promptTokens != null) {
-          statusEl.textContent = `Batch ${index + 1}/${total}: ${batchLabel} (used ${formatTokenCount(promptTokens)} tokens)`;
+          const remaining = eta.estimate(index + 1, total - (index + 1));
+          statusEl.textContent = `Batch ${index + 1}/${total}: ${batchLabel} (used ${formatTokenCount(promptTokens)} tokens)${remaining ? ` - ${remaining}` : ''}`;
+          document.title = `[${index + 1}/${total}] ${originalTitle}`;
           await renderTokenPanel();
         } else {
-          statusEl.textContent = `Batch ${index + 1}/${total}: ${batchLabel} (~${formatTokenCount(estimatedTokens)} tokens est.)`;
+          const remaining = eta.estimate(index, total - index);
+          statusEl.textContent = `Batch ${index + 1}/${total}: ${batchLabel} (~${formatTokenCount(estimatedTokens)} tokens est.)${remaining ? ` - ${remaining}` : ''}`;
         }
       },
       onChapterError: ({ chapter, error }) => {
@@ -356,6 +399,9 @@ export function renderBibleView(container, { projectId, settings }) {
         console.error(`Extraction failed for "${chapter.title}"`, error);
       },
     });
+    runBtn.disabled = false;
+    stopExtractionBtn.hidden = true;
+    stopExtractionBtn.disabled = false;
     await renderContent();
     await renderDuplicates();
     await renderTokenPanel();

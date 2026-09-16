@@ -21,7 +21,16 @@ export function renderResetCorner(container, { projectId }) {
   });
 
   container.querySelector('#corner-reset-data').addEventListener('click', async () => {
-    if (!confirm('Delete this project\'s chapters, story bible, and synthesis? Settings are kept. This cannot be undone.')) return;
+    const project = await db.get('projects', projectId);
+    const title = project?.title || 'this project';
+    const typed = prompt(
+      `This permanently deletes all chapters, story bible entries, and synthesis for "${title}". ` +
+      `Settings are kept. This cannot be undone.\n\nType the project title to confirm: ${title}`
+    );
+    if (typed !== title) {
+      if (typed !== null) alert('Title did not match - nothing was deleted.');
+      return;
+    }
     await db.clearProject(projectId);
     location.hash = `#/project/${projectId}`;
     location.reload();

@@ -1,5 +1,7 @@
 import { splitIntoChapters, splitByLineCount } from '../splitter.js';
-import { db, newId } from '../storage.js';
+import { db, newId, defaultSettings } from '../storage.js';
+import { planExtractionBatches } from '../extraction.js';
+import { estimateTokens, formatTokenCount } from '../tokens.js';
 
 export function renderImportView(container, { onProjectReady }) {
   container.innerHTML = `
@@ -9,7 +11,7 @@ export function renderImportView(container, { onProjectReady }) {
       <label>Author <input type="text" id="proj-author" placeholder="(optional)" /></label>
       <label>Raw .txt file <input type="file" id="proj-file" accept=".txt" /></label>
       <div id="chapter-preview"></div>
-      <button id="commit-import" disabled>Create project from these chapters</button>
+      <button id="commit-import" class="btn-primary" disabled>Create project from these chapters</button>
     </section>
   `;
 
@@ -27,9 +29,22 @@ export function renderImportView(container, { onProjectReady }) {
     renderPreview();
   });
 
+  function scaleEstimate() {
+    if (detectedChapters.length === 0) return '';
+    const settings = defaultSettings();
+    const totalChars = detectedChapters.reduce((sum, c) => sum + c.text.length, 0);
+    const totalTokens = detectedChapters.reduce((sum, c) => sum + estimateTokens(c.text), 0);
+    const extractionBatches = planExtractionBatches(detectedChapters, settings).length;
+    return `<p class="muted">~${totalChars.toLocaleString()} characters, ~${formatTokenCount(totalTokens)} tokens total. ` +
+      `At default settings (${formatTokenCount(settings.contextBudget)} context budget), extraction alone would take ` +
+      `roughly ${extractionBatches} Ollama call(s) - translation will be similar. Adjust context budget/batch fill in ` +
+      `Settings after creating the project if this looks off.</p>`;
+  }
+
   function renderPreview() {
     preview.innerHTML = `
       <p>${detectedChapters.length} chapter(s) detected. Adjust below if boundaries look wrong, then commit.</p>
+      ${scaleEstimate()}
       <button id="use-fixed-split" type="button">Use fixed-size chunks instead</button>
       <ul class="chapter-list">
         ${detectedChapters.map((c, i) => `

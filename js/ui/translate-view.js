@@ -4,6 +4,7 @@ import { translationSystemPrompt, translationUserPrompt } from '../prompts.js';
 import { estimateCallTokens, formatTokenCount } from '../tokens.js';
 import { loadBibleAsPlainObject } from '../extraction.js';
 import { joinChaptersWithMarkers } from '../grouping.js';
+import { renderRefusalPanel } from './refusal-panel.js';
 
 export function renderTranslateView(container, { projectId, settings }) {
   container.innerHTML = `
@@ -14,6 +15,7 @@ export function renderTranslateView(container, { projectId, settings }) {
         <span id="translation-status" class="muted"></span>
       </div>
       <div id="chapter-status-list"></div>
+      <div id="refusal-panel-translation"></div>
     </section>
   `;
 
@@ -87,4 +89,5 @@ export function renderTranslateView(container, { projectId, settings }) {
   });
 
   renderList();
+  renderRefusalPanel(container.querySelector('#refusal-panel-translation'), { projectId, settings, kind: 'translation' });
 }

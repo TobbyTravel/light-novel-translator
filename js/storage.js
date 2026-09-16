@@ -127,6 +127,10 @@ export function defaultSettings() {
     // Percent of contextBudget to target when auto-batching multiple
     // chapters into one call, leaving headroom for the model's own output.
     batchFillTarget: 80,
+    // Ordered list of Ollama model names tried, in order, when a chapter is
+    // flagged by the refusal crosscheck (js/crosscheck.js) - never sent to
+    // Ollama directly, only used to pick which model each retry attempt uses.
+    fallbackModels: [],
   };
 }
 

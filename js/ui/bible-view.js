@@ -4,6 +4,7 @@ import { extractionSystemPrompt, extractionUserPrompt } from '../prompts.js';
 import { estimateCallTokens, formatTokenCount } from '../tokens.js';
 import { runSynthesis, planSynthesisRun } from '../synthesis.js';
 import { renderRefusalPanel } from './refusal-panel.js';
+import { runAutoPipeline } from '../autorun.js';
 
 const TABS = [
   { key: 'characters', label: 'Characters', fields: ['sourceName', 'englishName', 'aliases', 'honorifics', 'speechStyle', 'role', 'notes'], hasEvidence: true },
@@ -35,6 +36,13 @@ export function renderBibleView(container, { projectId, settings }) {
   container.innerHTML = `
     <section class="panel">
       <h2>2. Story bible</h2>
+      <div class="panel autorun-box">
+        <div class="row">
+          <button id="run-all">Run all (extraction → synthesis → translation)</button>
+          <span id="autorun-status" class="muted"></span>
+        </div>
+        <p class="muted">Runs everything except epub export, so it's ready when you get back. Chapter/batch failures are logged and skipped rather than stopping the run.</p>
+      </div>
       <div class="row">
         <button id="run-extraction">Run extraction pass on all chapters</button>
         <span id="extraction-status" class="muted"></span>
@@ -54,6 +62,8 @@ export function renderBibleView(container, { projectId, settings }) {
   const duplicatesEl = container.querySelector('#duplicates-panel');
   const tokenPanelEl = container.querySelector('#token-panel');
   const synthesisPanelEl = container.querySelector('#synthesis-panel');
+  const autorunStatusEl = container.querySelector('#autorun-status');
+  const runAllBtn = container.querySelector('#run-all');
 
   async function renderSynthesisPanel(statusOverride) {
     const timeline = await db.allByProject('timeline', projectId);
@@ -268,6 +278,54 @@ export function renderBibleView(container, { projectId, settings }) {
       });
     });
   }
+
+  runAllBtn.addEventListener('click', async () => {
+    if (!settings.model) {
+      alert('Set an Ollama model name in Settings first.');
+      return;
+    }
+    runAllBtn.disabled = true;
+    const originalTitle = document.title;
+    let wakeLock = null;
+    try {
+      wakeLock = await navigator.wakeLock?.request('screen');
+    } catch {
+      // Best-effort only - not all browsers/contexts support this.
+    }
+
+    autorunStatusEl.textContent = 'Starting...';
+    await runAutoPipeline({
+      projectId,
+      settings,
+      onProgress: (p) => {
+        let label;
+        if (p.stage === 'done') {
+          label = p.stageErrors.length > 0
+            ? `Done, with ${p.stageErrors.length} stage-level error(s) - check console.`
+            : 'Done - extraction, synthesis, and translation all complete.';
+        } else if (p.done) {
+          label = `${p.stage} complete.`;
+        } else if (p.chapter || p.batch) {
+          const label2 = p.batch?.length > 1 ? `${p.batch.length} chapters` : (p.batch?.[0]?.title || p.chapter?.title || '');
+          label = `${p.stage}: ${label2 ? `processing ${label2}` : 'running'}`;
+        } else if (p.stage === 'synthesis' && p.batch) {
+          label = `synthesis: batch ${p.batch}/${p.totalBatches}`;
+        } else {
+          label = `${p.stage}: starting...`;
+        }
+        autorunStatusEl.textContent = label;
+        document.title = `[${p.stage}] ${originalTitle}`;
+      },
+    });
+
+    document.title = originalTitle;
+    wakeLock?.release?.().catch(() => {});
+    runAllBtn.disabled = false;
+    await renderContent();
+    await renderDuplicates();
+    await renderTokenPanel();
+    await renderSynthesisPanel();
+  });
 
   container.querySelector('#run-extraction').addEventListener('click', async () => {
     if (!settings.model) {

@@ -80,6 +80,7 @@ table.bible-table { width: 100%; border-collapse: collapse; }
 .danger-btn { border-color: #d64545; color: #d64545; }
 .danger-btn:hover { background: #d64545; color: white; }
 
+.autorun-box { border: 1px solid var(--accent); border-radius: 6px; padding: 0.5rem 0.75rem; }
 .refusal-box { border: 1px solid #d64545; border-radius: 6px; padding: 0.5rem 0.75rem; }
 .flagged-chapter { border: 1px solid #d68a00; border-radius: 6px; padding: 0.5rem; margin-bottom: 0.5rem; }
 .flagged-chapter textarea { width: 100%; font-family: inherit; }

@@ -13,6 +13,7 @@ const HEADER_PATTERNS = [
   /^\s*(chapter|ch\.?|episode|ep\.?|part)\s*[:\-.]?\s*\d+/i,
   /^\s*第\s*[0-9０-９一二三四五六七八九十百千]+\s*[章話话回]/, // CJK "chapter N" markers
   new RegExp(`^\\s*${DIGIT}+\\s*${SEP}\\s*\\S`), // "12. Title" / "１２．Title" / "12 - Title"
+  new RegExp(`^\\s*${DIGIT}{2,4}\\s+\\S`), // "００１　Title" - zero-padded number + whitespace, no separator
   /^\s*[-=*~_]{3,}\s*$/, // decorative separator lines used as breaks
 ];
 

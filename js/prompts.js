@@ -15,11 +15,11 @@ export function extractionSystemPrompt({ sourceLanguage, chapterTitles }) {
       : '') +
     `Return a single JSON object with this exact shape:\n\n` +
     `{\n` +
-    `  "characters": [{ "sourceName": string, "englishName": string, "aliases": string[], "honorifics": string, ` +
+    `  "characters": [{ "sourceName": string, "aliases": string[], "honorifics": string, ` +
     `"speechStyle": string, "role": string, "notes": string, "sourceEvidence": string }],\n` +
     `  "relationships": [{ "characterA": string, "characterB": string, "type": string, "speechRegisterNotes": string, "basis": string }],\n` +
-    `  "locations": [{ "sourceName": string, "englishName": string, "description": string, "sourceEvidence": string }],\n` +
-    `  "terminology": [{ "sourceTerm": string, "englishRendering": string, "category": string, "notes": string, "sourceEvidence": string }],\n` +
+    `  "locations": [{ "sourceName": string, "description": string, "sourceEvidence": string }],\n` +
+    `  "terminology": [{ "sourceTerm": string, "category": string, "notes": string, "sourceEvidence": string }],\n` +
     `  "timelineEntries": [{ "chapterTitle": string, "summary": string, "keyEvents": string[] }]\n` +
     `}\n\n` +
     `Critical rules:\n` +
@@ -30,8 +30,9 @@ export function extractionSystemPrompt({ sourceLanguage, chapterTitles }) {
     `- "sourceEvidence" is REQUIRED for every character/location/terminology entry: a short (5-15 word) VERBATIM quote ` +
     `copied exactly from the text below that supports this entry. Do not paraphrase the quote.\n` +
     `- "basis" for relationships is a short free-text note on what in the text shows this relationship (paraphrase is fine).\n` +
-    `- "englishName"/"englishRendering" are your PROPOSED renderings for a human editor to approve - pick natural, ` +
-    `consistent forms and briefly justify unusual choices in "notes".\n` +
+    `- Keep "sourceName"/"sourceTerm" in the original ${sourceLanguage} - do NOT translate or romanize them here. ` +
+    `English renderings are decided separately, later, with full-novel context (see the "Standardize Names" pass), ` +
+    `not per-chunk where a name's other appearances aren't visible.\n` +
     `- "timelineEntries" MUST have exactly ${grouped ? 'one entry per chapter given above, in the same order, with ' +
       '"chapterTitle" matching the marker exactly' : 'one entry, for this chunk, with "chapterTitle" set to the chunk\'s title'}.\n` +
     `- Respond with ONLY the JSON object, no commentary, no markdown fences.`;
@@ -46,6 +47,31 @@ export function extractionUserPrompt({ chapterTitle, chapterText, chapters }) {
     return `CHUNK:\n${joined}`;
   }
   return `CHUNK ("${chapterTitle}"):\n${chapterText}`;
+}
+
+// The "Standardize Names" pass - unlike extraction (deliberately isolated
+// per chunk, see above), this is given EVERY evidence quote accumulated for
+// an entity across the whole novel processed so far, so the English-name
+// decision is made with full context instead of one chunk's worth.
+export function standardizeNamesSystemPrompt({ sourceLanguage, targetLanguage, entityType }) {
+  return `You are a literary translator standardizing proper-noun renderings for a novel written in ${sourceLanguage}, ` +
+    `to be translated into ${targetLanguage}. You are given every "${entityType}" entry recorded in the story bible so ` +
+    `far, each with its original-language name ("key"), any current proposed English rendering, and ALL evidence quotes ` +
+    `gathered for it across every chapter processed so far - unlike an earlier per-chunk extraction pass, you can see ` +
+    `every appearance at once here.\n\n` +
+    `For each entry, propose the single best, natural, consistent English rendering.\n\n` +
+    `Return a single JSON object: { "proposals": [{ "key": string, "englishName": string, "reason": string }] } - one ` +
+    `entry per input item, echoing "key" back EXACTLY as given so it can be matched to the original entry.\n\n` +
+    `Rules:\n` +
+    `- Base your choice on ALL the evidence given for that entry, not just one quote.\n` +
+    `- Prefer a natural, idiomatic English form over a literal transliteration, unless the literal form IS the natural choice.\n` +
+    `- Keep it consistent with any aliases also listed for that entry.\n` +
+    `- "reason" is one short sentence, especially useful for unusual or non-obvious choices.\n` +
+    `- Respond with ONLY the JSON object, no commentary, no markdown fences.`;
+}
+
+export function standardizeNamesUserPrompt({ items }) {
+  return `ENTRIES:\n${JSON.stringify(items)}`;
 }
 
 export function translationSystemPrompt({ sourceLanguage, targetLanguage, grouped }) {

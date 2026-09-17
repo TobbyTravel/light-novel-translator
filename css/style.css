@@ -58,6 +58,11 @@ table.bible-table { width: 100%; border-collapse: collapse; }
 .bible-table th, .bible-table td { border: 1px solid var(--border); padding: 0.4rem; text-align: left; vertical-align: top; }
 .bible-table th { background: #8882; }
 
+#marker-patterns { border: 1px solid var(--border); border-radius: 6px; padding: 0.5rem 0.75rem; display: flex; flex-direction: column; gap: 0.25rem; }
+#marker-patterns legend { padding: 0 0.4rem; font-size: 0.9em; }
+.pattern-checkbox { flex-direction: row; align-items: center; font-size: 0.9em; }
+.pattern-checkbox input[type="checkbox"] { width: auto; }
+
 .chapter-list { list-style: none; padding: 0; }
 .chapter-list li { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.25rem; }
 .chapter-list input[type="text"] { flex: 1; }
@@ -106,6 +111,32 @@ tr.batch-stripe-b:not(.over-budget) { background: #8882; }
 
 .synthesis-box { border: 1px solid var(--accent); border-radius: 6px; padding: 0.5rem 0.75rem; }
 .synthesis-box textarea { width: 100%; font-family: inherit; }
+
+#status-bar:not(:empty) {
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  padding: 0.4rem 0.75rem;
+  margin-bottom: 1rem;
+  font-size: 0.9em;
+}
+.status-bar-row { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
+.status-bar-row progress { flex: 0 0 140px; }
+.status-bar-others { margin-top: 0.25rem; }
+
+.live-output {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.5rem 0.75rem;
+  margin: 0.5rem 0;
+}
+.live-output pre {
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 240px;
+  overflow-y: auto;
+  font-size: 0.85em;
+  margin: 0.5rem 0 0;
+}
 
 #reset-corner {
   position: fixed;

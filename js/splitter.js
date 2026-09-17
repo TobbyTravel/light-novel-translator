@@ -9,22 +9,30 @@
 const DIGIT = '[0-9０-９]';
 const SEP = '[.\\-:．：－]';
 
-const HEADER_PATTERNS = [
-  /^\s*(chapter|ch\.?|episode|ep\.?|part)\s*[:\-.]?\s*\d+/i,
-  /^\s*第\s*[0-9０-９一二三四五六七八九十百千]+\s*[章話话回]/, // CJK "chapter N" markers
-  new RegExp(`^\\s*${DIGIT}+\\s*${SEP}\\s*\\S`), // "12. Title" / "１２．Title" / "12 - Title"
-  new RegExp(`^\\s*${DIGIT}{2,4}\\s+\\S`), // "００１　Title" - zero-padded number + whitespace, no separator
-  /^\s*[-=*~_]{3,}\s*$/, // decorative separator lines used as breaks
+// Named, individually-toggleable pattern categories. Order matters only in
+// that earlier categories are tested first per line, but every enabled
+// category is tried - a line matching any active pattern becomes a boundary.
+export const HEADER_PATTERN_CATEGORIES = [
+  { key: 'chapterWord', label: 'Chapter / Ch. / Episode / Part N', re: /^\s*(chapter|ch\.?|episode|ep\.?|part)\s*[:\-.]?\s*\d+/i },
+  { key: 'cjkChapter', label: 'CJK 第N章 / 話 / 回', re: /^\s*第\s*[0-9０-９一二三四五六七八九十百千]+\s*[章話话回]/ },
+  { key: 'numberedList', label: '"N. Title" / "N - Title"', re: new RegExp(`^\\s*${DIGIT}+\\s*${SEP}\\s*\\S`) },
+  { key: 'fullWidthNumber', label: 'Zero-padded number + title (e.g. ００１　Title)', re: new RegExp(`^\\s*${DIGIT}{2,4}\\s+\\S`) },
+  { key: 'decorativeSeparator', label: 'Decorative separator lines (---, ***, ...)', re: /^\s*[-=*~_]{3,}\s*$/ },
 ];
 
-export function splitIntoChapters(rawText) {
+export const DEFAULT_ACTIVE_PATTERN_KEYS = HEADER_PATTERN_CATEGORIES.map((c) => c.key);
+
+export function splitIntoChapters(rawText, activePatternKeys = DEFAULT_ACTIVE_PATTERN_KEYS) {
+  const activeSet = new Set(activePatternKeys);
+  const activePatterns = HEADER_PATTERN_CATEGORIES.filter((c) => activeSet.has(c.key)).map((c) => c.re);
+
   const lines = rawText.split(/\r\n|\r|\n/);
   const boundaries = [];
 
   lines.forEach((line, idx) => {
     const trimmed = line.trim();
     if (!trimmed) return;
-    if (HEADER_PATTERNS.some((re) => re.test(trimmed))) {
+    if (activePatterns.some((re) => re.test(trimmed))) {
       boundaries.push({ startLine: idx, title: trimmed.slice(0, 80) });
     }
   });

@@ -6,6 +6,8 @@ import { loadBibleAsPlainObject } from '../extraction.js';
 import { joinChaptersWithMarkers } from '../grouping.js';
 import { renderRefusalPanel } from './refusal-panel.js';
 import { createEtaTracker } from '../eta.js';
+import { createLiveOutputPanel } from './live-output.js';
+import { getJob } from '../jobs.js';
 
 function escapeHtml(str) {
   return String(str ?? '').replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
@@ -17,9 +19,11 @@ export function renderTranslateView(container, { projectId, settings }) {
       <h2>3. Translate</h2>
       <div class="row">
         <button id="run-translation" class="btn-primary">Translate all chapters</button>
+        <button id="resume-translation" hidden>Resume interrupted run</button>
         <button id="stop-translation" hidden>Stop</button>
         <span id="translation-status" class="muted"></span>
       </div>
+      <div id="live-output-translation"></div>
       <div id="chapter-status-list"></div>
       <div id="refusal-panel-translation"></div>
     </section>
@@ -27,6 +31,14 @@ export function renderTranslateView(container, { projectId, settings }) {
 
   const statusEl = container.querySelector('#translation-status');
   const listEl = container.querySelector('#chapter-status-list');
+  const resumeBtn = container.querySelector('#resume-translation');
+  const liveOutput = createLiveOutputPanel(container.querySelector('#live-output-translation'));
+
+  async function checkResumable() {
+    const job = await getJob(projectId);
+    resumeBtn.hidden = !(job && job.kind === 'translation' && job.status === 'interrupted');
+    return job;
+  }
 
   async function renderList() {
     const chapters = (await db.allByProject('chapters', projectId)).sort((a, b) => a.index - b.index);
@@ -74,9 +86,10 @@ export function renderTranslateView(container, { projectId, settings }) {
   const runBtn = container.querySelector('#run-translation');
   const stopBtn = container.querySelector('#stop-translation');
 
-  runBtn.addEventListener('click', async () => {
+  async function startRun(startBatchIndex = 0) {
     if (!settings.model) return alert('Set an Ollama model name in Settings first.');
     runBtn.disabled = true;
+    resumeBtn.disabled = true;
     stopBtn.hidden = false;
     const controller = new AbortController();
     stopBtn.onclick = () => {
@@ -87,12 +100,15 @@ export function renderTranslateView(container, { projectId, settings }) {
     const eta = createEtaTracker();
     const chapters = (await db.allByProject('chapters', projectId)).sort((a, b) => a.index - b.index);
     statusEl.textContent = 'Running...';
+    liveOutput.reset();
     let failed = 0;
     await runTranslation({
       projectId,
       chapters,
       settings,
+      startBatchIndex,
       signal: controller.signal,
+      onToken: (chunk, full) => liveOutput.onToken(chunk, full),
       onProgress: ({ index, total, batch, done, estimatedTokens, aborted }) => {
         const batchLabel = batch && batch.length > 1 ? `${batch.length} chapters (${batch[0].title} .. ${batch[batch.length - 1].title})` : batch?.[0]?.title;
         if (done) {
@@ -112,11 +128,20 @@ export function renderTranslateView(container, { projectId, settings }) {
       },
     });
     runBtn.disabled = false;
+    resumeBtn.disabled = false;
     stopBtn.hidden = true;
     stopBtn.disabled = false;
     await renderList();
+    await checkResumable();
+  }
+
+  runBtn.addEventListener('click', () => startRun(0));
+  resumeBtn.addEventListener('click', async () => {
+    const job = await getJob(projectId);
+    startRun(job?.batchIndex ?? 0);
   });
 
   renderList();
+  checkResumable();
   renderRefusalPanel(container.querySelector('#refusal-panel-translation'), { projectId, settings, kind: 'translation' });
 }

@@ -1,15 +1,48 @@
-import { splitIntoChapters, splitByLineCount } from '../splitter.js';
+import { splitIntoChapters, splitByLineCount, HEADER_PATTERN_CATEGORIES, DEFAULT_ACTIVE_PATTERN_KEYS } from '../splitter.js';
 import { db, newId, defaultSettings } from '../storage.js';
 import { planExtractionBatches } from '../extraction.js';
 import { estimateTokens, formatTokenCount } from '../tokens.js';
 
+const PATTERN_PREF_KEY = 'lnt-chapter-marker-patterns';
+
+function loadActivePatternKeys() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(PATTERN_PREF_KEY));
+    if (Array.isArray(saved) && saved.length > 0) {
+      const validKeys = new Set(HEADER_PATTERN_CATEGORIES.map((c) => c.key));
+      return saved.filter((k) => validKeys.has(k));
+    }
+  } catch {
+    // ignore malformed/missing localStorage value, fall through to default
+  }
+  return [...DEFAULT_ACTIVE_PATTERN_KEYS];
+}
+
+function saveActivePatternKeys(keys) {
+  try {
+    localStorage.setItem(PATTERN_PREF_KEY, JSON.stringify(keys));
+  } catch {
+    // localStorage unavailable (e.g. private mode) - preference just won't persist
+  }
+}
+
 export function renderImportView(container, { onProjectReady }) {
+  let activePatternKeys = loadActivePatternKeys();
+
   container.innerHTML = `
     <section class="panel">
       <h2>1. Import source text</h2>
       <label>Project title <input type="text" id="proj-title" placeholder="My Light Novel" /></label>
       <label>Author <input type="text" id="proj-author" placeholder="(optional)" /></label>
       <label>Raw .txt file <input type="file" id="proj-file" accept=".txt" /></label>
+      <fieldset id="marker-patterns">
+        <legend>Chapter marker patterns</legend>
+        ${HEADER_PATTERN_CATEGORIES.map((c) => `
+          <label class="pattern-checkbox">
+            <input type="checkbox" data-key="${c.key}" ${activePatternKeys.includes(c.key) ? 'checked' : ''} />
+            ${escapeAttr(c.label)}
+          </label>`).join('')}
+      </fieldset>
       <div id="chapter-preview"></div>
       <button id="commit-import" class="btn-primary" disabled>Create project from these chapters</button>
     </section>
@@ -18,6 +51,7 @@ export function renderImportView(container, { onProjectReady }) {
   const fileInput = container.querySelector('#proj-file');
   const preview = container.querySelector('#chapter-preview');
   const commitBtn = container.querySelector('#commit-import');
+  const patternCheckboxes = container.querySelectorAll('#marker-patterns input[type="checkbox"]');
   let detectedChapters = [];
   let rawText = '';
 
@@ -25,8 +59,19 @@ export function renderImportView(container, { onProjectReady }) {
     const file = fileInput.files[0];
     if (!file) return;
     rawText = await file.text();
-    detectedChapters = splitIntoChapters(rawText);
+    detectedChapters = splitIntoChapters(rawText, activePatternKeys);
     renderPreview();
+  });
+
+  patternCheckboxes.forEach((cb) => {
+    cb.addEventListener('change', () => {
+      activePatternKeys = Array.from(patternCheckboxes).filter((c) => c.checked).map((c) => c.dataset.key);
+      saveActivePatternKeys(activePatternKeys);
+      if (rawText) {
+        detectedChapters = splitIntoChapters(rawText, activePatternKeys);
+        renderPreview();
+      }
+    });
   });
 
   function scaleEstimate() {

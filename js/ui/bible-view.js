@@ -6,6 +6,9 @@ import { runSynthesis, planSynthesisRun } from '../synthesis.js';
 import { renderRefusalPanel } from './refusal-panel.js';
 import { runAutoPipeline } from '../autorun.js';
 import { createEtaTracker } from '../eta.js';
+import { createLiveOutputPanel } from './live-output.js';
+import { getJob } from '../jobs.js';
+import { runStandardizeNames, applyStandardNameProposal } from '../standardize.js';
 
 const TABS = [
   { key: 'characters', label: 'Characters', fields: ['sourceName', 'englishName', 'aliases', 'honorifics', 'speechStyle', 'role', 'notes'], hasEvidence: true },
@@ -47,13 +50,20 @@ export function renderBibleView(container, { projectId, settings }) {
       </div>
       <div class="row">
         <button id="run-extraction">Run extraction pass on all chapters</button>
+        <button id="resume-extraction" hidden>Resume interrupted run</button>
         <button id="stop-extraction" hidden>Stop</button>
         <span id="extraction-status" class="muted"></span>
       </div>
+      <div id="live-output-extraction"></div>
       <details id="token-panel"><summary>Token usage per chapter (estimated / actual)</summary></details>
       <div id="synthesis-panel"></div>
       <div id="refusal-panel-extraction"></div>
       <div id="duplicates-panel"></div>
+      <div class="row">
+        <button id="run-standardize">Standardize names (propose English renderings)</button>
+        <span id="standardize-status" class="muted">Extracted names stay in the original language; this proposes consistent English renderings from all evidence gathered so far, for you to review.</span>
+      </div>
+      <div id="standardize-panel"></div>
       <div class="tabs" id="bible-tabs"></div>
       <div id="bible-tab-content"></div>
     </section>
@@ -67,6 +77,14 @@ export function renderBibleView(container, { projectId, settings }) {
   const synthesisPanelEl = container.querySelector('#synthesis-panel');
   const autorunStatusEl = container.querySelector('#autorun-status');
   const runAllBtn = container.querySelector('#run-all');
+  const resumeExtractionBtn = container.querySelector('#resume-extraction');
+  const liveOutput = createLiveOutputPanel(container.querySelector('#live-output-extraction'));
+
+  async function checkResumable() {
+    const job = await getJob(projectId);
+    resumeExtractionBtn.hidden = !(job && job.kind === 'extraction' && job.status === 'interrupted');
+    return job;
+  }
 
   async function renderSynthesisPanel(statusOverride) {
     const timeline = await db.allByProject('timeline', projectId);
@@ -289,6 +307,83 @@ export function renderBibleView(container, { projectId, settings }) {
     });
   }
 
+  const standardizeStatusEl = container.querySelector('#standardize-status');
+  const standardizePanelEl = container.querySelector('#standardize-panel');
+  let standardizeProposals = [];
+
+  function renderStandardizePanel() {
+    if (standardizeProposals.length === 0) {
+      standardizePanelEl.innerHTML = '';
+      return;
+    }
+    standardizePanelEl.innerHTML = `
+      <div class="panel duplicates-box">
+        <div class="row">
+          <strong>Proposed English renderings (${standardizeProposals.length})</strong>
+          <button id="accept-all-standardize">Accept all</button>
+        </div>
+        ${standardizeProposals.map((p, i) => `
+          <div class="row dup-row" data-idx="${i}">
+            <span>${escapeHtml(p.key)}: ${p.currentEnglish ? `<s>${escapeHtml(p.currentEnglish)}</s> &rarr; ` : ''}<strong>${escapeHtml(p.proposedEnglish)}</strong>${p.reason ? ` <span class="muted">(${escapeHtml(p.reason)})</span>` : ''} <span class="muted">[${p.store}]</span></span>
+            <button class="accept-standardize-btn" data-idx="${i}">Accept</button>
+            <button class="reject-standardize-btn" data-idx="${i}">Reject</button>
+          </div>
+        `).join('')}
+      </div>
+    `;
+    standardizePanelEl.querySelectorAll('.accept-standardize-btn').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const idx = Number(btn.dataset.idx);
+        await applyStandardNameProposal(standardizeProposals[idx]);
+        standardizeProposals.splice(idx, 1);
+        renderStandardizePanel();
+        await renderContent();
+      });
+    });
+    standardizePanelEl.querySelectorAll('.reject-standardize-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const idx = Number(btn.dataset.idx);
+        standardizeProposals.splice(idx, 1);
+        renderStandardizePanel();
+      });
+    });
+    standardizePanelEl.querySelector('#accept-all-standardize').addEventListener('click', async () => {
+      for (const p of standardizeProposals) await applyStandardNameProposal(p);
+      standardizeProposals = [];
+      renderStandardizePanel();
+      await renderContent();
+    });
+  }
+
+  container.querySelector('#run-standardize').addEventListener('click', async (e) => {
+    if (!settings.model) {
+      alert('Set an Ollama model name in Settings first.');
+      return;
+    }
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    liveOutput.reset();
+    try {
+      standardizeProposals = await runStandardizeNames({
+        projectId,
+        settings,
+        onToken: (chunk, full) => liveOutput.onToken(chunk, full),
+        onProgress: ({ store, index, total, done }) => {
+          standardizeStatusEl.textContent = done
+            ? `Done - ${standardizeProposals.length} proposal(s) to review below.`
+            : `Analyzing ${store} (${index + 1}/${total})...`;
+        },
+      });
+      if (standardizeProposals.length === 0) {
+        standardizeStatusEl.textContent = 'Done - no changes proposed (all current renderings already look best, or nothing to name yet).';
+      }
+      renderStandardizePanel();
+    } catch (err) {
+      standardizeStatusEl.textContent = `Failed: ${err.message}`;
+    }
+    btn.disabled = false;
+  });
+
   const stopAllBtn = container.querySelector('#stop-all');
   const stopExtractionBtn = container.querySelector('#stop-extraction');
 
@@ -314,10 +409,12 @@ export function renderBibleView(container, { projectId, settings }) {
     }
 
     autorunStatusEl.textContent = 'Starting...';
+    liveOutput.reset();
     await runAutoPipeline({
       projectId,
       settings,
       signal: controller.signal,
+      onToken: (chunk, full) => liveOutput.onToken(chunk, full),
       onProgress: (p) => {
         let label;
         if (p.stage === 'done') {
@@ -351,15 +448,18 @@ export function renderBibleView(container, { projectId, settings }) {
     await renderDuplicates();
     await renderTokenPanel();
     await renderSynthesisPanel();
+    await checkResumable();
   });
 
-  container.querySelector('#run-extraction').addEventListener('click', async (e) => {
+  const runExtractionBtn = container.querySelector('#run-extraction');
+
+  async function startExtraction(startBatchIndex = 0) {
     if (!settings.model) {
       alert('Set an Ollama model name in Settings first.');
       return;
     }
-    const runBtn = e.currentTarget;
-    runBtn.disabled = true;
+    runExtractionBtn.disabled = true;
+    resumeExtractionBtn.disabled = true;
     stopExtractionBtn.hidden = false;
     const controller = new AbortController();
     stopExtractionBtn.onclick = () => {
@@ -371,12 +471,15 @@ export function renderBibleView(container, { projectId, settings }) {
     const chapters = await db.allByProject('chapters', projectId);
     chapters.sort((a, b) => a.index - b.index);
     statusEl.textContent = 'Running...';
+    liveOutput.reset();
     const errors = [];
     await runExtraction({
       projectId,
       chapters,
       settings,
+      startBatchIndex,
       signal: controller.signal,
+      onToken: (chunk, full) => liveOutput.onToken(chunk, full),
       onProgress: async ({ index, total, batch, done, estimatedTokens, promptTokens, aborted }) => {
         const batchLabel = batch && batch.length > 1 ? `${batch.length} chapters (${batch[0].title} .. ${batch[batch.length - 1].title})` : batch?.[0]?.title;
         if (done) {
@@ -399,13 +502,21 @@ export function renderBibleView(container, { projectId, settings }) {
         console.error(`Extraction failed for "${chapter.title}"`, error);
       },
     });
-    runBtn.disabled = false;
+    runExtractionBtn.disabled = false;
+    resumeExtractionBtn.disabled = false;
     stopExtractionBtn.hidden = true;
     stopExtractionBtn.disabled = false;
     await renderContent();
     await renderDuplicates();
     await renderTokenPanel();
     await renderSynthesisPanel();
+    await checkResumable();
+  }
+
+  runExtractionBtn.addEventListener('click', () => startExtraction(0));
+  resumeExtractionBtn.addEventListener('click', async () => {
+    const job = await getJob(projectId);
+    startExtraction(job?.batchIndex ?? 0);
   });
 
   synthesisPanelEl.addEventListener('click', async (e) => {
@@ -416,10 +527,12 @@ export function renderBibleView(container, { projectId, settings }) {
     }
     e.target.disabled = true;
     await renderSynthesisPanel('Running...');
+    liveOutput.reset();
     try {
       await runSynthesis({
         projectId,
         settings,
+        onToken: (chunk, full) => liveOutput.onToken(chunk, full),
         onProgress: ({ stage, batch, totalBatches }) => {
           const label = stage === 'reduce' ? 'Combining batch summaries...' : `Batch ${batch}/${totalBatches}...`;
           renderSynthesisPanel(label);
@@ -436,5 +549,6 @@ export function renderBibleView(container, { projectId, settings }) {
   renderDuplicates();
   renderSynthesisPanel();
   renderTokenPanel();
+  checkResumable();
   renderRefusalPanel(container.querySelector('#refusal-panel-extraction'), { projectId, settings, kind: 'extraction' });
 }

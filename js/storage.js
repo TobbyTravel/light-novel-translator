@@ -2,10 +2,10 @@
 // all scoped under a single active project id so multiple novels can coexist.
 
 const DB_NAME = 'lnt-db';
-const DB_VERSION = 2;
-const STORES = ['projects', 'chapters', 'characters', 'relationships', 'locations', 'terminology', 'timeline', 'synthesis'];
+const DB_VERSION = 3;
+const STORES = ['projects', 'chapters', 'characters', 'relationships', 'locations', 'terminology', 'timeline', 'synthesis', 'jobs'];
 // One record per project, keyed by id = projectId directly - no projectId index needed.
-const NO_PROJECT_INDEX = new Set(['projects', 'synthesis']);
+const NO_PROJECT_INDEX = new Set(['projects', 'synthesis', 'jobs']);
 
 let dbPromise = null;
 
@@ -84,6 +84,12 @@ export const db = {
   async allProjects() {
     const db = await openDb();
     const store = db.transaction('projects', 'readonly').objectStore('projects');
+    return reqToPromise(store.getAll());
+  },
+
+  async allRecords(storeName) {
+    const db = await openDb();
+    const store = db.transaction(storeName, 'readonly').objectStore(storeName);
     return reqToPromise(store.getAll());
   },
 

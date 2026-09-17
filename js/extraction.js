@@ -5,6 +5,7 @@ import { verifyQuote, looksLikeDuplicate } from './verify.js';
 import { estimateCallTokens } from './tokens.js';
 import { packIntoBatches } from './batching.js';
 import { joinChaptersWithMarkers } from './grouping.js';
+import { startJob, updateJob, finishJob } from './jobs.js';
 
 // Serializes the current on-disk bible into the plain-object shape the
 // translation prompt expects (extraction no longer reads this back - see
@@ -269,11 +270,17 @@ export function planExtractionBatches(chapters, settings) {
 // INDEPENDENTLY (no prior bible state is shown to the model - see
 // js/prompts.js); merging into the running bible happens afterward, in
 // plain code, in this file.
-export async function runExtraction({ projectId, chapters, settings, onProgress, onChapterError, signal }) {
+export async function runExtraction({ projectId, chapters, settings, onProgress, onChapterError, onToken, signal, startBatchIndex = 0 }) {
   const batches = planExtractionBatches(chapters, settings);
-  for (let b = 0; b < batches.length; b++) {
+  if (startBatchIndex > 0) {
+    await updateJob(projectId, { status: 'running', batchIndex: startBatchIndex, totalBatches: batches.length });
+  } else {
+    await startJob(projectId, { kind: 'extraction', totalBatches: batches.length, chapterIds: chapters.map((c) => c.id) });
+  }
+  for (let b = startBatchIndex; b < batches.length; b++) {
     if (signal?.aborted) break;
     const batch = batches[b];
+    await updateJob(projectId, { batchIndex: b });
     onProgress?.({ index: b, total: batches.length, chapter: batch[0], batch, batchIndex: b, totalBatches: batches.length });
     try {
       const chapterTitles = batch.map((c) => c.title);
@@ -286,8 +293,10 @@ export async function runExtraction({ projectId, chapters, settings, onProgress,
         model: settings.model,
         system,
         prompt,
+        onToken,
         signal,
       });
+      await updateJob(projectId, { addTokensIn: promptTokens ?? 0, addTokensOut: completionTokens ?? 0 });
       const fragment = extractJson(raw);
       await mergeCharacters(projectId, fragment.characters, batch);
       await mergeRelationships(projectId, fragment.relationships, batch);
@@ -314,6 +323,7 @@ export async function runExtraction({ projectId, chapters, settings, onProgress,
       }
     }
   }
+  await finishJob(projectId, signal?.aborted ? 'cancelled' : 'done');
   onProgress?.({ index: batches.length, total: batches.length, done: true, aborted: !!signal?.aborted });
 }
 

@@ -5,6 +5,7 @@ import { loadBibleAsPlainObject } from './extraction.js';
 import { estimateCallTokens } from './tokens.js';
 import { packIntoBatches } from './batching.js';
 import { joinChaptersWithMarkers, splitByMarkers } from './grouping.js';
+import { startJob, updateJob, finishJob } from './jobs.js';
 
 function batchLabel(chapters) {
   return chapters.length === 1 ? chapters[0].title : `${chapters[0].title} .. ${chapters[chapters.length - 1].title}`;
@@ -38,11 +39,16 @@ export function planTranslationBatches(chapters, bible, settings) {
 // Translates all chapters of a project, auto-batched into as few calls as
 // fit the context budget. No per-batch approval gate - failures are marked
 // and left individually retryable.
-export async function runTranslation({ projectId, chapters, settings, onProgress, onChapterError, signal }) {
+export async function runTranslation({ projectId, chapters, settings, onProgress, onChapterError, onToken, signal, startBatchIndex = 0 }) {
   const bible = await loadBibleAsPlainObject(projectId);
   const batches = planTranslationBatches(chapters, bible, settings);
+  if (startBatchIndex > 0) {
+    await updateJob(projectId, { status: 'running', batchIndex: startBatchIndex, totalBatches: batches.length });
+  } else {
+    await startJob(projectId, { kind: 'translation', totalBatches: batches.length, chapterIds: chapters.map((c) => c.id) });
+  }
 
-  for (let b = 0; b < batches.length; b++) {
+  for (let b = startBatchIndex; b < batches.length; b++) {
     if (signal?.aborted) break;
     const batch = batches[b];
     const grouped = batch.length > 1;
@@ -51,17 +57,21 @@ export async function runTranslation({ projectId, chapters, settings, onProgress
       targetLanguage: settings.targetLanguage,
       grouped,
     });
+    await updateJob(projectId, { batchIndex: b });
     const estimatedTokens = estimateCallTokens({ system, prompt: translationPrompt(bible, batch) });
     onProgress?.({ index: b, total: batches.length, chapter: batch[0], batch, estimatedTokens });
-    const aborted = await translateBatch({ batch, bible, system, settings, onChapterError, batchIndex: b, signal });
+    const { aborted, promptTokens, completionTokens } = await translateBatch({ batch, bible, system, settings, onChapterError, onToken, batchIndex: b, signal });
+    await updateJob(projectId, { addTokensIn: promptTokens ?? 0, addTokensOut: completionTokens ?? 0 });
     if (aborted) break;
   }
+  await finishJob(projectId, signal?.aborted ? 'cancelled' : 'done');
   onProgress?.({ index: batches.length, total: batches.length, done: true, aborted: !!signal?.aborted });
 }
 
-// Returns true if this batch was cut short by a user-requested abort (so the
-// caller's loop can stop immediately without treating it as a failure).
-export async function translateBatch({ batch, bible, system, settings, onChapterError, batchIndex, signal }) {
+// Returns { aborted, promptTokens, completionTokens } - aborted true if this
+// batch was cut short by a user-requested abort (so the caller's loop can
+// stop immediately without treating it as a failure).
+export async function translateBatch({ batch, bible, system, settings, onChapterError, onToken, batchIndex, signal }) {
   try {
     const prompt = translationPrompt(bible, batch);
     const { text, promptTokens, completionTokens } = await chat({
@@ -69,6 +79,7 @@ export async function translateBatch({ batch, bible, system, settings, onChapter
       model: settings.model,
       system,
       prompt,
+      onToken,
       signal,
     });
 
@@ -82,7 +93,7 @@ export async function translateBatch({ batch, bible, system, settings, onChapter
         translationBatchSize: 1,
         translationModel: settings.model,
       });
-      return;
+      return { aborted: false, promptTokens, completionTokens };
     }
 
     const { ok, segments } = splitByMarkers(text, batch);
@@ -114,14 +125,15 @@ export async function translateBatch({ batch, bible, system, settings, onChapter
         await db.put('chapters', { ...chapter, status: 'failed' });
       }
     }
+    return { aborted: false, promptTokens, completionTokens };
   } catch (err) {
-    if (err.name === 'AbortError') return true;
+    if (err.name === 'AbortError') return { aborted: true };
     for (const chapter of batch) {
       await db.put('chapters', { ...chapter, status: 'failed' });
       onChapterError?.({ index: batchIndex, chapter, error: err });
     }
   }
-  return false;
+  return { aborted: false };
 }
 
 // Re-translates a single chapter on demand (e.g. after bible corrections) -

@@ -9,7 +9,7 @@ import { runTranslation } from './translation.js';
 // continues) - this wrapper additionally makes sure a whole STAGE failing
 // outright (e.g. synthesis erroring because a prior stage produced nothing)
 // doesn't stop later stages from at least attempting to run.
-export async function runAutoPipeline({ projectId, settings, onProgress, signal }) {
+export async function runAutoPipeline({ projectId, settings, onProgress, onToken, signal }) {
   const stageErrors = [];
 
   if (!signal?.aborted) {
@@ -21,6 +21,7 @@ export async function runAutoPipeline({ projectId, settings, onProgress, signal 
         chapters,
         settings,
         signal,
+        onToken,
         onProgress: (p) => onProgress?.({ stage: 'extraction', ...p }),
         onChapterError: (e) => onProgress?.({ stage: 'extraction', chapterError: e }),
       });
@@ -36,6 +37,7 @@ export async function runAutoPipeline({ projectId, settings, onProgress, signal 
         projectId,
         settings,
         signal,
+        onToken,
         onProgress: (p) => onProgress?.({ stage: 'synthesis', ...p }),
       });
     } catch (err) {
@@ -52,6 +54,7 @@ export async function runAutoPipeline({ projectId, settings, onProgress, signal 
         chapters,
         settings,
         signal,
+        onToken,
         onProgress: (p) => onProgress?.({ stage: 'translation', ...p }),
         onChapterError: (e) => onProgress?.({ stage: 'translation', chapterError: e }),
       });

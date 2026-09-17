@@ -133,6 +133,10 @@ export function renderTranslateView(container, { projectId, settings }) {
     stopBtn.disabled = false;
     await renderList();
     await checkResumable();
+    // Chapters get flagged as each call completes (js/translation.js), not
+    // only via a manual "Run crosscheck" click - refresh the panel so a
+    // flag from this run is visible immediately, not just after a reload.
+    renderRefusalPanel(container.querySelector('#refusal-panel-translation'), { projectId, settings, kind: 'translation' });
   }
 
   runBtn.addEventListener('click', () => startRun(0));

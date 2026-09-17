@@ -95,6 +95,27 @@ table.bible-table { width: 100%; border-collapse: collapse; }
 .danger-btn:hover { background: #d64545; color: white; }
 
 .autorun-box { border: 1px solid var(--accent); border-radius: 6px; padding: 0.5rem 0.75rem; }
+
+.bible-stepper { display: flex; gap: 0.5rem; flex-wrap: wrap; margin: 0.5rem 0; }
+.bible-step {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.4rem 0.75rem;
+  text-decoration: none;
+  color: inherit;
+  min-width: 150px;
+}
+.bible-step.active { border-width: 2px; border-color: var(--accent); }
+.bible-step .step-top { display: flex; align-items: center; gap: 0.4rem; font-weight: 600; }
+.bible-step .step-dot { width: 0.6em; height: 0.6em; border-radius: 50%; flex: none; background: #8888; }
+.bible-step .step-detail { font-size: 0.8em; }
+.bible-step.status-done .step-dot { background: #2a9d4a; }
+.bible-step.status-in-progress .step-dot { background: var(--accent); }
+.bible-step.status-needs-attention .step-dot { background: #d68a00; }
+.bible-step.status-needs-attention { border-color: #d68a00; }
 .refusal-box { border: 1px solid #d64545; border-radius: 6px; padding: 0.5rem 0.75rem; }
 .flagged-chapter { border: 1px solid #d68a00; border-radius: 6px; padding: 0.5rem; margin-bottom: 0.5rem; }
 .flagged-chapter textarea { width: 100%; font-family: inherit; }

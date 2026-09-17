@@ -2,10 +2,11 @@ import { chat, extractJson } from './ollama.js';
 import { extractionSystemPrompt, extractionUserPrompt } from './prompts.js';
 import { db, newId, ENTITY_STORES } from './storage.js';
 import { verifyQuote, looksLikeDuplicate } from './verify.js';
-import { estimateCallTokens } from './tokens.js';
+import { estimateCallTokens, numPredictBudget } from './tokens.js';
 import { packIntoBatches } from './batching.js';
 import { joinChaptersWithMarkers } from './grouping.js';
 import { startJob, updateJob, finishJob } from './jobs.js';
+import { flagChapter } from './refusal.js';
 
 // Serializes the current on-disk bible into the plain-object shape the
 // translation prompt expects (extraction no longer reads this back - see
@@ -223,7 +224,7 @@ export async function pickCanonicalWithAI(store, a, b, settings) {
       `B: "${b[field] || ''}" - aliases: ${(b.aliases || []).join(', ') || 'none'} - notes: ${b.notes || 'none'}`,
       `  evidence: ${evidenceExcerpt(b).map((q) => `"${q}"`).join(' / ') || 'none'}`,
     ].join('\n');
-    const { text } = await chat({ host: settings.ollamaHost, model: settings.model, system, prompt });
+    const { text } = await chat({ host: settings.ollamaHost, model: settings.model, system, prompt, numPredict: 200 });
     const parsed = extractJson(text);
     if (parsed?.canonical === 'a') return [a, b];
     if (parsed?.canonical === 'b') return [b, a];
@@ -245,6 +246,24 @@ export async function mergeDuplicateRecords(store, keepRecord, dropRecord) {
   return merged;
 }
 
+// Detects and merges every duplicate pair in one pass, each via
+// pickCanonicalWithAI - the shared "best guess, no per-pair prompting"
+// resolution used by both the unattended autopilot (js/autorun.js) and the
+// manual "Auto-resolve all" button (js/ui/bible/duplicates-step.js), so a
+// future fix to this logic doesn't need to be made in two places.
+export async function autoResolveDuplicates(projectId, settings) {
+  const dupes = await detectDuplicates(projectId);
+  for (const [store, pairs] of Object.entries(dupes)) {
+    for (const [a, b] of pairs) {
+      const keepRecord = await db.get(store, a.id);
+      const dropRecord = await db.get(store, b.id);
+      if (!keepRecord || !dropRecord) continue; // already merged as part of an earlier pair this pass
+      const [keep, drop] = await pickCanonicalWithAI(store, keepRecord, dropRecord, settings);
+      await mergeDuplicateRecords(store, keep, drop);
+    }
+  }
+}
+
 function extractionBatchEstimate(batch, settings) {
   const chapterTitles = batch.map((c) => c.title);
   const system = extractionSystemPrompt({ sourceLanguage: settings.sourceLanguage, chapterTitles });
@@ -257,6 +276,7 @@ function extractionBatchEstimate(batch, settings) {
 // with entity/quote count as batches get bigger, so a flat reserve would
 // under-reserve for large batches).
 export function planExtractionBatches(chapters, settings) {
+  if (settings.chapterByChapter) return chapters.map((c) => [c]);
   const targetBudget = settings.contextBudget * (settings.batchFillTarget / 100);
   return packIntoBatches(
     chapters,
@@ -288,15 +308,36 @@ export async function runExtraction({ projectId, chapters, settings, onProgress,
       const prompt = extractionUserPrompt({ chapters: batch });
       const estimatedTokens = estimateCallTokens({ system, prompt });
       onProgress?.({ index: b, total: batches.length, chapter: batch[0], batch, estimatedTokens });
-      const { text: raw, promptTokens, completionTokens } = await chat({
+      const { text: raw, promptTokens, completionTokens, refusedEarly } = await chat({
         host: settings.ollamaHost,
         model: settings.model,
         system,
         prompt,
         onToken,
+        numPredict: numPredictBudget({ system, prompt, contextBudget: settings.contextBudget }),
         signal,
       });
       await updateJob(projectId, { addTokensIn: promptTokens ?? 0, addTokensOut: completionTokens ?? 0 });
+
+      if (refusedEarly) {
+        // chat() already cancelled the stream on a refusal-phrase match -
+        // raw is partial and won't parse as JSON, so don't bother trying.
+        // Persist and flag immediately rather than waiting for a manual
+        // crosscheck run, so this shows up in the wizard right away.
+        for (const chapter of batch) {
+          const record = {
+            ...chapter,
+            extractionBatchSize: batch.length,
+            extractionModel: settings.model,
+            extractionRawResponse: raw,
+          };
+          await db.put('chapters', record);
+          await flagChapter(record, 'extraction', raw);
+          onChapterError?.({ index: b, chapter, error: new Error('Refused early (see refusal crosscheck panel)') });
+        }
+        continue;
+      }
+
       const fragment = extractJson(raw);
       await mergeCharacters(projectId, fragment.characters, batch);
       await mergeRelationships(projectId, fragment.relationships, batch);
@@ -304,7 +345,7 @@ export async function runExtraction({ projectId, chapters, settings, onProgress,
       await mergeTerminology(projectId, fragment.terminology, batch);
       await addTimelineEntries(projectId, batch, fragment.timelineEntries);
       for (const chapter of batch) {
-        await db.put('chapters', {
+        const record = {
           ...chapter,
           extractionPromptTokens: promptTokens,
           extractionCompletionTokens: completionTokens,
@@ -313,7 +354,9 @@ export async function runExtraction({ projectId, chapters, settings, onProgress,
           // Kept purely so a later refusal crosscheck (js/crosscheck.js) has
           // something to scan - extraction itself never reads this back.
           extractionRawResponse: raw,
-        });
+        };
+        await db.put('chapters', record);
+        await flagChapter(record, 'extraction', raw);
       }
       onProgress?.({ index: b, total: batches.length, chapter: batch[0], batch, promptTokens, completionTokens });
     } catch (err) {
@@ -341,6 +384,7 @@ export async function retryExtractionChapter({ projectId, chapter, settings }) {
     model: settings.model,
     system,
     prompt,
+    numPredict: numPredictBudget({ system, prompt, contextBudget: settings.contextBudget }),
   });
   const fragment = extractJson(raw);
   await mergeCharacters(projectId, fragment.characters, [chapter]);

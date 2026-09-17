@@ -37,6 +37,22 @@ export function estimateCallTokens({ system, prompt }) {
   return estimateTokens(system) + estimateTokens(prompt);
 }
 
+// A floor so a call whose prompt already ate most/all of contextBudget
+// still gets *some* room to answer, rather than num_predict collapsing to
+// zero or negative (which some backends treat as "unlimited" - the exact
+// opposite of what a cap is for).
+const MIN_NUM_PREDICT = 512;
+
+// Sizes num_predict (js/ollama.js) to the context budget actually left
+// over after this call's own prompt, not the whole budget regardless of
+// prompt size - a near-full-context batch would otherwise still be told it
+// may generate a second full budget's worth of output on top, defeating
+// the point of the cap for exactly the large-batch case it exists to
+// protect against.
+export function numPredictBudget({ system, prompt, contextBudget }) {
+  return Math.max(contextBudget - estimateCallTokens({ system, prompt }), MIN_NUM_PREDICT);
+}
+
 export function formatTokenCount(n) {
   if (n == null) return '?';
   if (n < 1000) return String(n);

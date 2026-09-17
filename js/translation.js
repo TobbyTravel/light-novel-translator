@@ -1,8 +1,9 @@
 import { chat } from './ollama.js';
 import { translationSystemPrompt, translationUserPrompt } from './prompts.js';
 import { db } from './storage.js';
+import { flagChapter } from './refusal.js';
 import { loadBibleAsPlainObject } from './extraction.js';
-import { estimateCallTokens } from './tokens.js';
+import { estimateCallTokens, numPredictBudget } from './tokens.js';
 import { packIntoBatches } from './batching.js';
 import { joinChaptersWithMarkers, splitByMarkers } from './grouping.js';
 import { startJob, updateJob, finishJob } from './jobs.js';
@@ -21,6 +22,7 @@ function translationPrompt(bible, batch) {
 // context budget. Reserve is larger than extraction's (translated output is
 // roughly comparable to, sometimes longer than, source length).
 export function planTranslationBatches(chapters, bible, settings) {
+  if (settings.chapterByChapter) return chapters.map((c) => [c]);
   const targetBudget = settings.contextBudget * (settings.batchFillTarget / 100);
   return packIntoBatches(
     chapters,
@@ -80,26 +82,34 @@ export async function translateBatch({ batch, bible, system, settings, onChapter
       system,
       prompt,
       onToken,
+      numPredict: numPredictBudget({ system, prompt, contextBudget: settings.contextBudget }),
       signal,
     });
 
     if (batch.length === 1) {
-      await db.put('chapters', {
+      const translatedText = text.trim();
+      const record = {
         ...batch[0],
-        translatedText: text.trim(),
+        translatedText,
         status: 'translated',
         promptTokens,
         completionTokens,
         translationBatchSize: 1,
         translationModel: settings.model,
-      });
+      };
+      await db.put('chapters', record);
+      // Flag immediately rather than waiting for a manual crosscheck run -
+      // catches both a full refusal and one cut short by chat()'s
+      // mid-stream early-abort (js/ollama.js), whose partial text still
+      // lands here as the chapter's stored output.
+      await flagChapter(record, 'translation', translatedText);
       return { aborted: false, promptTokens, completionTokens };
     }
 
     const { ok, segments } = splitByMarkers(text, batch);
     if (ok) {
       for (let i = 0; i < batch.length; i++) {
-        await db.put('chapters', {
+        const record = {
           ...batch[i],
           translatedText: segments[i],
           status: 'translated',
@@ -107,20 +117,27 @@ export async function translateBatch({ batch, bible, system, settings, onChapter
           completionTokens,
           translationBatchSize: batch.length,
           translationModel: settings.model,
-        });
+        };
+        await db.put('chapters', record);
+        await flagChapter(record, 'translation', segments[i]);
       }
     } else {
       // Marker mismatch: keep the raw response rather than losing it, but
-      // never guess which part belongs to which chapter.
-      await db.put('chapters', {
+      // never guess which part belongs to which chapter. Also flag it -
+      // a mismatch is often itself the result of a refusal that never
+      // produced the expected per-chapter markers.
+      const rawText = text.trim();
+      const record = {
         ...batch[0],
-        translatedText: text.trim(),
+        translatedText: rawText,
         status: 'needs-manual-split',
         promptTokens,
         completionTokens,
         translationBatchSize: batch.length,
         translationModel: settings.model,
-      });
+      };
+      await db.put('chapters', record);
+      await flagChapter(record, 'translation', rawText);
       for (const chapter of batch.slice(1)) {
         await db.put('chapters', { ...chapter, status: 'failed' });
       }

@@ -18,9 +18,11 @@ export function renderSettingsView(container, { projectId, settings, onChange })
       </label>
       <p class="muted">For comparison only - not sent to Ollama. Set this to whatever context size you've configured in Ollama itself, so the token estimates in the Bible/Translate views can warn you when a call would exceed it.</p>
       <label>Batch fill target (%)
-        <input type="number" id="s-batch-fill" value="${settings.batchFillTarget}" min="10" max="100" step="5" />
+        <input type="number" id="s-batch-fill" value="${settings.batchFillTarget}" min="10" max="100" step="5" ${settings.chapterByChapter ? 'disabled' : ''} />
       </label>
       <p class="muted">When running extraction/translation on all chapters, consecutive chapters are auto-batched into one call until they'd use this percentage of the context budget, leaving headroom for the model's own output.</p>
+      <label class="row"><input type="checkbox" id="s-chapter-by-chapter" ${settings.chapterByChapter ? 'checked' : ''} /> Process one chapter per call (no auto-batching)</label>
+      <p class="muted">Overrides the batch fill target above - every chapter gets its own extraction/translation call instead of being grouped to fill context.</p>
       <label>Fallback models</label>
       <div id="s-fallback-list"></div>
       <button id="s-fallback-add" type="button">+ Add fallback model</button>
@@ -71,12 +73,18 @@ export function renderSettingsView(container, { projectId, settings, onChange })
     settings.targetLanguage = el('#s-target').value.trim() || 'English';
     settings.contextBudget = Number(el('#s-context-budget').value) || 16384;
     settings.batchFillTarget = Number(el('#s-batch-fill').value) || 80;
+    settings.chapterByChapter = el('#s-chapter-by-chapter').checked;
     await db.put('projects', { ...(await db.get('projects', projectId)), settings });
     onChange(settings);
   }
 
   ['#s-host', '#s-model', '#s-source', '#s-target', '#s-context-budget', '#s-batch-fill'].forEach((sel) => {
     el(sel).addEventListener('change', persist);
+  });
+
+  el('#s-chapter-by-chapter').addEventListener('change', async () => {
+    await persist();
+    renderSettingsView(container, { projectId, settings, onChange });
   });
 
   el('#s-fallback-add').addEventListener('click', async () => {

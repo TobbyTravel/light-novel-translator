@@ -1,7 +1,9 @@
 import { db } from './storage.js';
-import { detectRefusal } from './refusal.js';
+import { detectRefusal, flagChapter } from './refusal.js';
 import { translateBatch } from './translation.js';
 import { retryExtractionChapter } from './extraction.js';
+
+export { flagChapter };
 
 // Both crosscheck passes are pure local scans over already-stored text -
 // no Ollama connectivity required. They read the relevant field for each
@@ -14,25 +16,8 @@ async function scanChapters(projectId, kind, getOutputText) {
   for (const chapter of chapters) {
     const outputText = getOutputText(chapter);
     if (!outputText) continue;
-    const { flagged, reasons } = detectRefusal({ sourceText: chapter.text, outputText });
-    const refusalFlags = chapter.refusalFlags || {};
-    const refusalAttempts = chapter.refusalAttempts || {};
-
-    refusalFlags[kind] = flagged ? { reasons, detectedAt: new Date().toISOString() } : null;
-    if (flagged && !(refusalAttempts[kind]?.length)) {
-      // First time this chapter is flagged for this kind - record the
-      // existing output as attempt #1 so history is never lost.
-      refusalAttempts[kind] = [{
-        model: chapter[kind === 'translation' ? 'translationModel' : 'extractionModel'] || '(primary model)',
-        output: outputText,
-        flagged: true,
-        reasons,
-        attemptedAt: new Date().toISOString(),
-      }];
-    }
-    if (flagged) flaggedCount++;
-
-    await db.put('chapters', { ...chapter, refusalFlags, refusalAttempts });
+    const updated = await flagChapter(chapter, kind, outputText);
+    if (updated.refusalFlags?.[kind]) flaggedCount++;
   }
   return flaggedCount;
 }

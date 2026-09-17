@@ -18,9 +18,9 @@ let currentSettings = defaultSettings();
 let activeView = 'import';
 
 function parseHash() {
-  const match = location.hash.match(/^#\/project\/([^/]+)(?:\/(\w+))?/);
-  if (match) return { projectId: match[1], view: match[2] || 'bible' };
-  return { projectId: null, view: 'import' };
+  const match = location.hash.match(/^#\/project\/([^/]+)(?:\/(\w+))?(?:\/(\w+))?/);
+  if (match) return { projectId: match[1], view: match[2] || 'bible', step: match[3] };
+  return { projectId: null, view: 'import', step: undefined };
 }
 
 async function loadProjectSettings(projectId) {
@@ -55,7 +55,7 @@ function renderNav() {
 }
 
 async function render() {
-  const { projectId, view } = parseHash();
+  const { projectId, view, step } = parseHash();
   currentProjectId = projectId;
   activeView = view;
 
@@ -81,7 +81,7 @@ async function render() {
   else if (view === 'export') renderExportView(app, commonProps);
   else if (view === 'settings') {
     renderSettingsView(app, { ...commonProps, onChange: (s) => { currentSettings = s; } });
-  } else renderBibleView(app, commonProps);
+  } else renderBibleView(app, { ...commonProps, step });
 }
 
 window.addEventListener('hashchange', render);

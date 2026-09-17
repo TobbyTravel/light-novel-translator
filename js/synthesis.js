@@ -1,7 +1,7 @@
 import { chat, extractJson } from './ollama.js';
 import { synthesisSystemPrompt, synthesisUserPrompt, synthesisReducePrompt } from './prompts.js';
 import { db } from './storage.js';
-import { estimateCallTokens } from './tokens.js';
+import { estimateCallTokens, numPredictBudget } from './tokens.js';
 import { packIntoBatches } from './batching.js';
 import { startJob, updateJob, finishJob } from './jobs.js';
 
@@ -37,7 +37,7 @@ export function planSynthesisRun({ timelineEntries, settings }) {
 }
 
 async function callSynthesis({ settings, system, prompt, onToken, signal }) {
-  const { text, promptTokens, completionTokens } = await chat({ host: settings.ollamaHost, model: settings.model, system, prompt, onToken, signal });
+  const { text, promptTokens, completionTokens } = await chat({ host: settings.ollamaHost, model: settings.model, system, prompt, onToken, numPredict: numPredictBudget({ system, prompt, contextBudget: settings.contextBudget }), signal });
   return { result: extractJson(text), promptTokens, completionTokens };
 }
 

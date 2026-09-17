@@ -1,4 +1,5 @@
 import { estimateTokens } from './tokens.js';
+import { db } from './storage.js';
 
 // Common refusal/moralizing boilerplate that shouldn't appear in a
 // translation or extraction result given the prompts explicitly instruct
@@ -39,8 +40,11 @@ const REFUSAL_PHRASES = [
 // rather than a genuinely terse rendering.
 const MIN_LENGTH_RATIO = 0.2;
 
-function findPhraseMatches(outputText) {
-  const lower = outputText.toLowerCase();
+// Exported separately from detectRefusal so js/ollama.js can run just the
+// phrase check against partial, still-streaming text (the length-ratio
+// check below only makes sense once generation is complete).
+export function findRefusalPhrases(outputText) {
+  const lower = (outputText || '').toLowerCase();
   return REFUSAL_PHRASES.filter((phrase) => lower.includes(phrase));
 }
 
@@ -49,7 +53,7 @@ function findPhraseMatches(outputText) {
 export function detectRefusal({ sourceText, outputText }) {
   const reasons = [];
 
-  const matches = findPhraseMatches(outputText || '');
+  const matches = findRefusalPhrases(outputText || '');
   for (const phrase of matches) {
     reasons.push(`Matched refusal phrase: "${phrase}"`);
   }
@@ -64,4 +68,33 @@ export function detectRefusal({ sourceText, outputText }) {
   }
 
   return { flagged: reasons.length > 0, reasons };
+}
+
+// Runs detectRefusal against one chapter's output and persists the
+// flag/attempt-history fields - the single unit of work shared by the
+// manual crosscheck pass (js/crosscheck.js, js/ui/refusal-panel.js) and
+// automatic, as-each-call-completes flagging (js/translation.js,
+// js/extraction.js), so both paths write the exact same field shapes.
+export async function flagChapter(chapter, kind, outputText) {
+  if (!outputText) return chapter;
+  const { flagged, reasons } = detectRefusal({ sourceText: chapter.text, outputText });
+  const refusalFlags = { ...(chapter.refusalFlags || {}) };
+  const refusalAttempts = { ...(chapter.refusalAttempts || {}) };
+
+  refusalFlags[kind] = flagged ? { reasons, detectedAt: new Date().toISOString() } : null;
+  if (flagged && !(refusalAttempts[kind]?.length)) {
+    // First time this chapter is flagged for this kind - record the
+    // existing output as attempt #1 so history is never lost.
+    refusalAttempts[kind] = [{
+      model: chapter[kind === 'translation' ? 'translationModel' : 'extractionModel'] || '(primary model)',
+      output: outputText,
+      flagged: true,
+      reasons,
+      attemptedAt: new Date().toISOString(),
+    }];
+  }
+
+  const updated = { ...chapter, refusalFlags, refusalAttempts };
+  await db.put('chapters', updated);
+  return updated;
 }

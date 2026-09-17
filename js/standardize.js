@@ -10,6 +10,7 @@
 import { chat, extractJson } from './ollama.js';
 import { standardizeNamesSystemPrompt, standardizeNamesUserPrompt } from './prompts.js';
 import { db } from './storage.js';
+import { numPredictBudget } from './tokens.js';
 
 const STORE_CONFIG = {
   characters: {
@@ -54,7 +55,7 @@ async function proposeForStore(store, projectId, settings, onToken, signal) {
     entityType: store,
   });
   const prompt = standardizeNamesUserPrompt({ items: records.map((r) => toPromptItem(r, config)) });
-  const { text } = await chat({ host: settings.ollamaHost, model: settings.model, system, prompt, onToken, signal });
+  const { text } = await chat({ host: settings.ollamaHost, model: settings.model, system, prompt, onToken, numPredict: numPredictBudget({ system, prompt, contextBudget: settings.contextBudget }), signal });
   const parsed = extractJson(text);
   const proposals = parsed?.proposals || [];
 

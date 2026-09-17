@@ -1,14 +1,16 @@
 import { db } from './storage.js';
-import { runExtraction } from './extraction.js';
+import { runExtraction, autoResolveDuplicates } from './extraction.js';
+import { runStandardizeNames, applyStandardNameProposal } from './standardize.js';
 import { runSynthesis } from './synthesis.js';
 import { runTranslation } from './translation.js';
 
-// Runs extraction, synthesis, and translation back-to-back so a long book
-// can be left unattended. Per-chapter/batch failures already don't throw
-// inside each stage (they're reported via onChapterError and the stage
-// continues) - this wrapper additionally makes sure a whole STAGE failing
-// outright (e.g. synthesis erroring because a prior stage produced nothing)
-// doesn't stop later stages from at least attempting to run.
+// Runs extraction, duplicate resolution, name standardization, synthesis,
+// and translation back-to-back so a long book can be left unattended.
+// Per-chapter/batch failures already don't throw inside each stage
+// (they're reported via onChapterError and the stage continues) - this
+// wrapper additionally makes sure a whole STAGE failing outright (e.g.
+// synthesis erroring because a prior stage produced nothing) doesn't stop
+// later stages from at least attempting to run.
 export async function runAutoPipeline({ projectId, settings, onProgress, onToken, signal }) {
   const stageErrors = [];
 
@@ -27,6 +29,31 @@ export async function runAutoPipeline({ projectId, settings, onProgress, onToken
       });
     } catch (err) {
       if (err.name !== 'AbortError') stageErrors.push({ stage: 'extraction', error: err });
+    }
+  }
+
+  if (!signal?.aborted) {
+    onProgress?.({ stage: 'duplicates' });
+    try {
+      await autoResolveDuplicates(projectId, settings);
+    } catch (err) {
+      if (err.name !== 'AbortError') stageErrors.push({ stage: 'duplicates', error: err });
+    }
+  }
+
+  if (!signal?.aborted) {
+    onProgress?.({ stage: 'standardize' });
+    try {
+      const proposals = await runStandardizeNames({
+        projectId,
+        settings,
+        signal,
+        onToken,
+        onProgress: (p) => onProgress?.({ stage: 'standardize', ...p }),
+      });
+      for (const proposal of proposals) await applyStandardNameProposal(proposal);
+    } catch (err) {
+      if (err.name !== 'AbortError') stageErrors.push({ stage: 'standardize', error: err });
     }
   }
 

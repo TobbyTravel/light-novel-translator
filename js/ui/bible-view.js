@@ -1,4 +1,5 @@
 import { runAutoPipeline } from '../autorun.js';
+import { getJob } from '../jobs.js';
 import { createLiveOutputPanel } from './live-output.js';
 import { computeStepStatuses } from './bible/step-status.js';
 import { renderStepper, BIBLE_STEPS } from './bible/stepper.js';
@@ -55,6 +56,11 @@ export function renderBibleView(container, { projectId, settings, step }) {
   }
 
   runAllBtn.addEventListener('click', async () => {
+    const existingJob = await getJob(projectId);
+    if (existingJob?.status === 'running') {
+      alert(`A ${existingJob.kind} job is already running for this project - wait for it to finish or stop it first.`);
+      return;
+    }
     if (!settings.model) {
       alert('Set an Ollama model name in Settings first.');
       return;

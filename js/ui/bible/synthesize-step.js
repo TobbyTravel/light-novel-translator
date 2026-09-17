@@ -2,6 +2,7 @@ import { db } from '../../storage.js';
 import { runSynthesis, planSynthesisRun } from '../../synthesis.js';
 import { formatTokenCount } from '../../tokens.js';
 import { createLiveOutputPanel } from '../live-output.js';
+import { getJob } from '../../jobs.js';
 
 function escapeHtml(str) {
   return String(str ?? '').replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
@@ -86,6 +87,11 @@ export function renderSynthesizeStep(container, { projectId, settings, refreshSt
 
   synthesisPanelEl.addEventListener('click', async (e) => {
     if (e.target.id !== 'run-synthesis') return;
+    const existingJob = await getJob(projectId);
+    if (existingJob?.status === 'running') {
+      alert(`A ${existingJob.kind} job is already running for this project - wait for it to finish or stop it first.`);
+      return;
+    }
     if (!settings.model) {
       alert('Set an Ollama model name in Settings first.');
       return;

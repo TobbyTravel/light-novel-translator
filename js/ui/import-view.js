@@ -1,5 +1,5 @@
 import { splitIntoChapters, splitByLineCount, HEADER_PATTERN_CATEGORIES, DEFAULT_ACTIVE_PATTERN_KEYS } from '../splitter.js';
-import { db, newId, defaultSettings } from '../storage.js';
+import { db, newId, defaultSettings, importProject } from '../storage.js';
 import { planExtractionBatches } from '../extraction.js';
 import { estimateTokens, formatTokenCount } from '../tokens.js';
 
@@ -26,12 +26,30 @@ function saveActivePatternKeys(keys) {
   }
 }
 
-export function renderImportView(container, { onProjectReady }) {
+export async function renderImportView(container, { onProjectReady }) {
   let activePatternKeys = loadActivePatternKeys();
+  const existingProjects = await db.allProjects();
 
   container.innerHTML = `
+    ${existingProjects.length > 0 ? `
+      <section class="panel">
+        <h2>Your projects</h2>
+        <ul class="chapter-list">
+          ${existingProjects.map((p) => `
+            <li>
+              <span>${escapeAttr(p.title)}${p.author ? ` <span class="muted">by ${escapeAttr(p.author)}</span>` : ''}</span>
+              <button type="button" class="open-project-btn" data-id="${p.id}">Open</button>
+            </li>`).join('')}
+        </ul>
+      </section>
+    ` : ''}
     <section class="panel">
-      <h2>1. Import source text</h2>
+      <h2>Import a project file</h2>
+      <label>Project JSON (previously exported from Settings &rarr; Export project) <input type="file" id="import-project-file" accept=".json" /></label>
+      <span id="import-status" class="muted"></span>
+    </section>
+    <section class="panel">
+      <h2>${existingProjects.length > 0 ? 'Or start a new project' : '1. Import source text'}</h2>
       <label>Project title <input type="text" id="proj-title" placeholder="My Light Novel" /></label>
       <label>Author <input type="text" id="proj-author" placeholder="(optional)" /></label>
       <label>Raw .txt file <input type="file" id="proj-file" accept=".txt" /></label>
@@ -54,6 +72,31 @@ export function renderImportView(container, { onProjectReady }) {
   const patternCheckboxes = container.querySelectorAll('#marker-patterns input[type="checkbox"]');
   let detectedChapters = [];
   let rawText = '';
+
+  container.querySelectorAll('.open-project-btn').forEach((btn) => {
+    btn.addEventListener('click', () => onProjectReady(btn.dataset.id));
+  });
+
+  const importStatusEl = container.querySelector('#import-status');
+  container.querySelector('#import-project-file').addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    let data;
+    try {
+      data = JSON.parse(await file.text());
+    } catch (err) {
+      importStatusEl.textContent = `That doesn't look like a valid project file (bad JSON: ${err.message}).`;
+      e.target.value = '';
+      return;
+    }
+    try {
+      const newProjectId = await importProject(data);
+      onProjectReady(newProjectId);
+    } catch (err) {
+      importStatusEl.textContent = `Couldn't import that file: ${err.message}`;
+      e.target.value = '';
+    }
+  });
 
   fileInput.addEventListener('change', async () => {
     const file = fileInput.files[0];

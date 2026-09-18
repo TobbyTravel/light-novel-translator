@@ -17,6 +17,31 @@ let currentProjectId = null;
 let currentSettings = defaultSettings();
 let activeView = 'import';
 
+const LAST_PROJECT_KEY = 'lnt-last-project';
+
+function rememberLastProject(projectId) {
+  try { localStorage.setItem(LAST_PROJECT_KEY, projectId); } catch { /* localStorage unavailable */ }
+}
+
+function getLastProject() {
+  try { return localStorage.getItem(LAST_PROJECT_KEY); } catch { return null; }
+}
+
+// Runs once, before the first render: if the page was opened with no
+// project hash (a plain reload/bookmark, not an explicit "+ New project"
+// click), jump straight to whichever project was last open instead of
+// always landing on the "create a new project" screen. Returns true if it
+// redirected (the resulting hashchange will trigger render() itself).
+async function maybeRedirectToLastProject() {
+  if (location.hash) return false;
+  const lastId = getLastProject();
+  if (!lastId) return false;
+  const project = await db.get('projects', lastId);
+  if (!project) return false;
+  location.hash = `#/project/${lastId}/bible`;
+  return true;
+}
+
 function parseHash() {
   const match = location.hash.match(/^#\/project\/([^/]+)(?:\/(\w+))?(?:\/(\w+))?/);
   if (match) return { projectId: match[1], view: match[2] || 'bible', step: match[3] };
@@ -63,7 +88,7 @@ async function render() {
     renderNav();
     renderResetCorner(resetCorner, { projectId: null });
     renderActivityBar(activityBar, { projectId: null });
-    renderImportView(app, {
+    await renderImportView(app, {
       onProjectReady: (newProjectId) => {
         location.hash = `#/project/${newProjectId}/bible`;
       },
@@ -71,6 +96,7 @@ async function render() {
     return;
   }
 
+  rememberLastProject(projectId);
   currentSettings = await loadProjectSettings(projectId);
   renderNav();
   renderResetCorner(resetCorner, { projectId });
@@ -85,4 +111,7 @@ async function render() {
 }
 
 window.addEventListener('hashchange', render);
-markStaleJobsInterrupted().then(render);
+markStaleJobsInterrupted().then(async () => {
+  const redirected = await maybeRedirectToLastProject();
+  if (!redirected) render();
+});

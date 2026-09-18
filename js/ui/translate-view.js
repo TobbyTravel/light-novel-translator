@@ -6,7 +6,7 @@ import { loadBibleAsPlainObject } from '../extraction.js';
 import { joinChaptersWithMarkers } from '../grouping.js';
 import { renderRefusalPanel } from './refusal-panel.js';
 import { createEtaTracker } from '../eta.js';
-import { createLiveOutputPanel } from './live-output.js';
+import { activityStart, activitySetStatus, activityPushToken, activityFinish } from './activity.js';
 import { getJob } from '../jobs.js';
 
 function escapeHtml(str) {
@@ -21,18 +21,14 @@ export function renderTranslateView(container, { projectId, settings }) {
         <button id="run-translation" class="btn-primary">Translate all chapters</button>
         <button id="resume-translation" hidden>Resume interrupted run</button>
         <button id="stop-translation" hidden>Stop</button>
-        <span id="translation-status" class="muted"></span>
       </div>
-      <div id="live-output-translation"></div>
       <div id="chapter-status-list"></div>
       <div id="refusal-panel-translation"></div>
     </section>
   `;
 
-  const statusEl = container.querySelector('#translation-status');
   const listEl = container.querySelector('#chapter-status-list');
   const resumeBtn = container.querySelector('#resume-translation');
-  const liveOutput = createLiveOutputPanel(container.querySelector('#live-output-translation'));
 
   async function checkResumable() {
     const job = await getJob(projectId);
@@ -103,8 +99,7 @@ export function renderTranslateView(container, { projectId, settings }) {
     const originalTitle = document.title;
     const eta = createEtaTracker();
     const chapters = (await db.allByProject('chapters', projectId)).sort((a, b) => a.index - b.index);
-    statusEl.textContent = 'Running...';
-    liveOutput.reset();
+    activityStart();
     let failed = 0;
     await runTranslation({
       projectId,
@@ -112,18 +107,19 @@ export function renderTranslateView(container, { projectId, settings }) {
       settings,
       startBatchIndex,
       signal: controller.signal,
-      onToken: (chunk, full) => liveOutput.onToken(chunk, full),
+      onToken: (chunk, full) => activityPushToken(chunk, full),
       onProgress: ({ index, total, batch, done, estimatedTokens, aborted }) => {
         const batchLabel = batch && batch.length > 1 ? `${batch.length} chapters (${batch[0].title} .. ${batch[batch.length - 1].title})` : batch?.[0]?.title;
         if (done) {
-          statusEl.textContent = aborted
+          activitySetStatus(aborted
             ? `Stopped by request (${index}/${total} batches done, ${failed} failed).`
-            : `Done (${failed} chapter(s) failed)`;
+            : `Done (${failed} chapter(s) failed)`);
+          activityFinish();
           document.title = originalTitle;
           return;
         }
         const remaining = eta.estimate(index, total - index);
-        statusEl.textContent = `Batch ${index + 1}/${total}: ${batchLabel} (~${formatTokenCount(estimatedTokens)} tokens est.)${remaining ? ` - ${remaining}` : ''}`;
+        activitySetStatus(`Batch ${index + 1}/${total}: ${batchLabel} (~${formatTokenCount(estimatedTokens)} tokens est.)${remaining ? ` - ${remaining}` : ''}`);
         document.title = `[${index + 1}/${total}] ${originalTitle}`;
       },
       onChapterError: ({ chapter, error }) => {

@@ -133,7 +133,11 @@ tr.batch-stripe-b:not(.over-budget) { background: #8882; }
 .synthesis-box { border: 1px solid var(--accent); border-radius: 6px; padding: 0.5rem 0.75rem; }
 .synthesis-box textarea { width: 100%; font-family: inherit; }
 
-#status-bar:not(:empty) {
+#activity-bar:not(:empty) {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  background: canvas;
   border: 1px solid var(--accent);
   border-radius: 6px;
   padding: 0.4rem 0.75rem;

@@ -1,7 +1,7 @@
 import { db } from '../../storage.js';
 import { runSynthesis, planSynthesisRun } from '../../synthesis.js';
 import { formatTokenCount } from '../../tokens.js';
-import { createLiveOutputPanel } from '../live-output.js';
+import { activityStart, activitySetStatus, activityPushToken, activityFinish } from '../activity.js';
 import { getJob } from '../../jobs.js';
 
 function escapeHtml(str) {
@@ -10,10 +10,8 @@ function escapeHtml(str) {
 
 export function renderSynthesizeStep(container, { projectId, settings, refreshStepper }) {
   container.innerHTML = `
-    <div id="live-output-synthesis"></div>
     <div id="synthesis-panel"></div>
   `;
-  const liveOutput = createLiveOutputPanel(container.querySelector('#live-output-synthesis'));
   const synthesisPanelEl = container.querySelector('#synthesis-panel');
 
   async function renderSynthesisPanel(statusOverride) {
@@ -98,14 +96,15 @@ export function renderSynthesizeStep(container, { projectId, settings, refreshSt
     }
     e.target.disabled = true;
     await renderSynthesisPanel('Running...');
-    liveOutput.reset();
+    activityStart();
     try {
       await runSynthesis({
         projectId,
         settings,
-        onToken: (chunk, full) => liveOutput.onToken(chunk, full),
+        onToken: (chunk, full) => activityPushToken(chunk, full),
         onProgress: ({ stage, batch, totalBatches }) => {
           const label = stage === 'reduce' ? 'Combining batch summaries...' : `Batch ${batch}/${totalBatches}...`;
+          activitySetStatus(label);
           renderSynthesisPanel(label);
         },
       });
@@ -113,6 +112,7 @@ export function renderSynthesizeStep(container, { projectId, settings, refreshSt
     } catch (err) {
       alert(`Synthesis failed: ${err.message}`);
     }
+    activityFinish();
     await renderSynthesisPanel();
   });
 

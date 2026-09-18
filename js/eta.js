@@ -17,7 +17,7 @@ export function createEtaTracker() {
   };
 }
 
-function formatDuration(ms) {
+export function formatDuration(ms) {
   const totalSec = Math.round(ms / 1000);
   if (totalSec < 10) return '';
   if (totalSec < 60) return `~${totalSec}s remaining`;

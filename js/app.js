@@ -5,13 +5,13 @@ import { renderTranslateView } from './ui/translate-view.js';
 import { renderExportView } from './ui/export-view.js';
 import { renderSettingsView } from './ui/settings-view.js';
 import { renderResetCorner } from './ui/reset-corner.js';
-import { renderStatusBar } from './ui/status-bar.js';
+import { renderActivityBar } from './ui/activity-bar.js';
 import { markStaleJobsInterrupted } from './jobs.js';
 
 const app = document.getElementById('app');
 const nav = document.getElementById('nav');
 const resetCorner = document.getElementById('reset-corner');
-const statusBar = document.getElementById('status-bar');
+const activityBar = document.getElementById('activity-bar');
 
 let currentProjectId = null;
 let currentSettings = defaultSettings();
@@ -62,7 +62,7 @@ async function render() {
   if (!projectId) {
     renderNav();
     renderResetCorner(resetCorner, { projectId: null });
-    renderStatusBar(statusBar, { projectId: null });
+    renderActivityBar(activityBar, { projectId: null });
     renderImportView(app, {
       onProjectReady: (newProjectId) => {
         location.hash = `#/project/${newProjectId}/bible`;
@@ -74,7 +74,7 @@ async function render() {
   currentSettings = await loadProjectSettings(projectId);
   renderNav();
   renderResetCorner(resetCorner, { projectId });
-  renderStatusBar(statusBar, { projectId });
+  renderActivityBar(activityBar, { projectId });
 
   const commonProps = { projectId, settings: currentSettings };
   if (view === 'translate') renderTranslateView(app, commonProps);

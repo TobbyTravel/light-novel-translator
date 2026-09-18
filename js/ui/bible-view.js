@@ -1,6 +1,7 @@
 import { runAutoPipeline } from '../autorun.js';
 import { getJob } from '../jobs.js';
-import { createLiveOutputPanel } from './live-output.js';
+import { createEtaTracker } from '../eta.js';
+import { activityStart, activitySetStatus, activityPushToken, activityFinish } from './activity.js';
 import { computeStepStatuses } from './bible/step-status.js';
 import { renderStepper, BIBLE_STEPS } from './bible/stepper.js';
 import { renderExtractStep } from './bible/extract-step.js';
@@ -33,10 +34,8 @@ export function renderBibleView(container, { projectId, settings, step }) {
         <div class="row">
           <button id="run-all" class="btn-primary">Run all (extraction &rarr; duplicates &rarr; standardize &rarr; synthesis &rarr; translation)</button>
           <button id="stop-all" hidden>Stop</button>
-          <span id="autorun-status" class="muted"></span>
         </div>
-        <p class="muted">Runs every stage unattended - extraction, duplicate resolution, name standardization, story synthesis, and translation - so it's ready when you get back. Chapter/batch failures are logged and skipped rather than stopping the run. Prefer control? Use the steps below instead.</p>
-        <div id="autorun-live-output"></div>
+        <p class="muted">Runs every stage unattended - extraction, duplicate resolution, name standardization, story synthesis, and translation - so it's ready when you get back. Chapter/batch failures are logged and skipped rather than stopping the run. Prefer control? Use the steps below instead. Status and live output show in the bar at the top of the page.</p>
       </div>
       <nav class="bible-stepper" id="bible-stepper"></nav>
       <div id="bible-step-content"></div>
@@ -45,10 +44,8 @@ export function renderBibleView(container, { projectId, settings, step }) {
 
   const stepperEl = container.querySelector('#bible-stepper');
   const stepContentEl = container.querySelector('#bible-step-content');
-  const autorunStatusEl = container.querySelector('#autorun-status');
   const runAllBtn = container.querySelector('#run-all');
   const stopAllBtn = container.querySelector('#stop-all');
-  const autopilotLiveOutput = createLiveOutputPanel(container.querySelector('#autorun-live-output'));
 
   async function refreshStepper(precomputed) {
     const statuses = await computeStepStatuses(projectId, precomputed);
@@ -81,13 +78,13 @@ export function renderBibleView(container, { projectId, settings, step }) {
       // Best-effort only - not all browsers/contexts support this.
     }
 
-    autorunStatusEl.textContent = 'Starting...';
-    autopilotLiveOutput.reset();
+    activityStart();
+    const eta = createEtaTracker();
     await runAutoPipeline({
       projectId,
       settings,
       signal: controller.signal,
-      onToken: (chunk, full) => autopilotLiveOutput.onToken(chunk, full),
+      onToken: (chunk, full) => activityPushToken(chunk, full),
       onProgress: (p) => {
         let label;
         if (p.stage === 'done') {
@@ -101,16 +98,21 @@ export function renderBibleView(container, { projectId, settings, step }) {
         } else if (p.chapter || p.batch) {
           const label2 = p.batch?.length > 1 ? `${p.batch.length} chapters` : (p.batch?.[0]?.title || p.chapter?.title || '');
           label = `${p.stage}: ${label2 ? `processing ${label2}` : 'running'}`;
+          if (p.index != null && p.total) {
+            const remaining = eta.estimate(p.index, p.total - p.index);
+            if (remaining) label += ` - ${remaining}`;
+          }
         } else if (p.stage === 'synthesis' && p.batch) {
           label = `synthesis: batch ${p.batch}/${p.totalBatches}`;
         } else {
           label = `${p.stage}: starting...`;
         }
-        autorunStatusEl.textContent = label;
+        activitySetStatus(label);
         document.title = `[${p.stage}] ${originalTitle}`;
       },
     });
 
+    activityFinish();
     document.title = originalTitle;
     wakeLock?.release?.().catch(() => {});
     runAllBtn.disabled = false;

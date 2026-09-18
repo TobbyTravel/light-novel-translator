@@ -1,5 +1,5 @@
 import { runStandardizeNames, applyStandardNameProposal } from '../../standardize.js';
-import { createLiveOutputPanel } from '../live-output.js';
+import { activityStart, activitySetStatus, activityPushToken, activityFinish } from '../activity.js';
 
 function escapeHtml(str) {
   return String(str ?? '').replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
@@ -11,13 +11,11 @@ export function renderStandardizeStep(container, { projectId, settings }) {
       <button id="run-standardize">Standardize names (propose English renderings)</button>
       <span id="standardize-status" class="muted">Extracted names stay in the original language; this proposes consistent English renderings from all evidence gathered so far, for you to review.</span>
     </div>
-    <div id="live-output-standardize"></div>
     <div id="standardize-panel"></div>
   `;
 
   const standardizeStatusEl = container.querySelector('#standardize-status');
   const standardizePanelEl = container.querySelector('#standardize-panel');
-  const liveOutput = createLiveOutputPanel(container.querySelector('#live-output-standardize'));
   let standardizeProposals = [];
 
   function renderStandardizePanel() {
@@ -69,16 +67,18 @@ export function renderStandardizeStep(container, { projectId, settings }) {
     }
     const btn = e.currentTarget;
     btn.disabled = true;
-    liveOutput.reset();
+    activityStart();
     try {
       standardizeProposals = await runStandardizeNames({
         projectId,
         settings,
-        onToken: (chunk, full) => liveOutput.onToken(chunk, full),
+        onToken: (chunk, full) => activityPushToken(chunk, full),
         onProgress: ({ store, index, total, done }) => {
-          standardizeStatusEl.textContent = done
+          const label = done
             ? `Done - ${standardizeProposals.length} proposal(s) to review below.`
             : `Analyzing ${store} (${index + 1}/${total})...`;
+          standardizeStatusEl.textContent = label;
+          activitySetStatus(label);
         },
       });
       if (standardizeProposals.length === 0) {
@@ -88,6 +88,7 @@ export function renderStandardizeStep(container, { projectId, settings }) {
     } catch (err) {
       standardizeStatusEl.textContent = `Failed: ${err.message}`;
     }
+    activityFinish();
     btn.disabled = false;
   });
 }

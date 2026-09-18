@@ -4,7 +4,7 @@ import { extractionSystemPrompt, extractionUserPrompt } from '../../prompts.js';
 import { estimateCallTokens, formatTokenCount } from '../../tokens.js';
 import { renderRefusalPanel } from '../refusal-panel.js';
 import { createEtaTracker } from '../../eta.js';
-import { createLiveOutputPanel } from '../live-output.js';
+import { activityStart, activitySetStatus, activityPushToken, activityFinish } from '../activity.js';
 import { getJob } from '../../jobs.js';
 
 function escapeHtml(str) {
@@ -17,19 +17,15 @@ export function renderExtractStep(container, { projectId, settings, refreshStepp
       <button id="run-extraction">Run extraction pass on all chapters</button>
       <button id="resume-extraction" hidden>Resume interrupted run</button>
       <button id="stop-extraction" hidden>Stop</button>
-      <span id="extraction-status" class="muted"></span>
     </div>
-    <div id="live-output-extraction"></div>
     <details id="token-panel"><summary>Token usage per chapter (estimated / actual)</summary></details>
     <div id="refusal-panel-extraction"></div>
   `;
 
-  const statusEl = container.querySelector('#extraction-status');
   const tokenPanelEl = container.querySelector('#token-panel');
   const runExtractionBtn = container.querySelector('#run-extraction');
   const resumeExtractionBtn = container.querySelector('#resume-extraction');
   const stopExtractionBtn = container.querySelector('#stop-extraction');
-  const liveOutput = createLiveOutputPanel(container.querySelector('#live-output-extraction'));
 
   async function checkResumable() {
     const job = await getJob(projectId);
@@ -89,8 +85,7 @@ export function renderExtractStep(container, { projectId, settings, refreshStepp
     const eta = createEtaTracker();
     const chapters = await db.allByProject('chapters', projectId);
     chapters.sort((a, b) => a.index - b.index);
-    statusEl.textContent = 'Running...';
-    liveOutput.reset();
+    activityStart();
     const errors = [];
     await runExtraction({
       projectId,
@@ -98,22 +93,23 @@ export function renderExtractStep(container, { projectId, settings, refreshStepp
       settings,
       startBatchIndex,
       signal: controller.signal,
-      onToken: (chunk, full) => liveOutput.onToken(chunk, full),
+      onToken: (chunk, full) => activityPushToken(chunk, full),
       onProgress: async ({ index, total, batch, done, estimatedTokens, promptTokens, aborted }) => {
         const batchLabel = batch && batch.length > 1 ? `${batch.length} chapters (${batch[0].title} .. ${batch[batch.length - 1].title})` : batch?.[0]?.title;
         if (done) {
-          statusEl.textContent = aborted
+          activitySetStatus(aborted
             ? `Stopped by request (${index}/${total} batches done, ${errors.length} failed).`
-            : `Done (${errors.length} chapter(s) failed)`;
+            : `Done (${errors.length} chapter(s) failed)`);
+          activityFinish();
           document.title = originalTitle;
         } else if (promptTokens != null) {
           const remaining = eta.estimate(index + 1, total - (index + 1));
-          statusEl.textContent = `Batch ${index + 1}/${total}: ${batchLabel} (used ${formatTokenCount(promptTokens)} tokens)${remaining ? ` - ${remaining}` : ''}`;
+          activitySetStatus(`Batch ${index + 1}/${total}: ${batchLabel} (used ${formatTokenCount(promptTokens)} tokens)${remaining ? ` - ${remaining}` : ''}`);
           document.title = `[${index + 1}/${total}] ${originalTitle}`;
           await renderTokenPanel();
         } else {
           const remaining = eta.estimate(index, total - index);
-          statusEl.textContent = `Batch ${index + 1}/${total}: ${batchLabel} (~${formatTokenCount(estimatedTokens)} tokens est.)${remaining ? ` - ${remaining}` : ''}`;
+          activitySetStatus(`Batch ${index + 1}/${total}: ${batchLabel} (~${formatTokenCount(estimatedTokens)} tokens est.)${remaining ? ` - ${remaining}` : ''}`);
         }
       },
       onChapterError: ({ chapter, error }) => {

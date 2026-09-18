@@ -41,6 +41,16 @@ export function renderSettingsView(container, { projectId, settings, onChange })
   const statusEl = el('#s-status');
   const fallbackListEl = el('#s-fallback-list');
 
+  async function refreshModelDatalist(host, { silent } = {}) {
+    try {
+      const models = await listModels(host);
+      el('#s-model-list').innerHTML = models.map((m) => `<option value="${m}"></option>`).join('');
+      if (!silent) statusEl.textContent = models.length ? `Found ${models.length} model(s).` : 'Connected, but no models installed.';
+    } catch (err) {
+      if (!silent) statusEl.textContent = err.message;
+    }
+  }
+
   function renderFallbackList() {
     fallbackListEl.innerHTML = (settings.fallbackModels || []).map((m, i) => `
       <div class="row fallback-row" data-idx="${i}">
@@ -95,16 +105,11 @@ export function renderSettingsView(container, { projectId, settings, onChange })
   });
 
   renderFallbackList();
+  refreshModelDatalist(settings.ollamaHost, { silent: true });
 
   el('#s-refresh-models').addEventListener('click', async () => {
     statusEl.textContent = 'Checking...';
-    try {
-      const models = await listModels(el('#s-host').value.trim() || settings.ollamaHost);
-      el('#s-model-list').innerHTML = models.map((m) => `<option value="${m}"></option>`).join('');
-      statusEl.textContent = models.length ? `Found ${models.length} model(s).` : 'Connected, but no models installed.';
-    } catch (err) {
-      statusEl.textContent = err.message;
-    }
+    await refreshModelDatalist(el('#s-host').value.trim() || settings.ollamaHost);
   });
 
   el('#export-project').addEventListener('click', async () => {

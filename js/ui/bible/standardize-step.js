@@ -73,10 +73,12 @@ export function renderStandardizeStep(container, { projectId, settings }) {
         projectId,
         settings,
         onToken: (chunk, full) => activityPushToken(chunk, full),
-        onProgress: ({ store, index, total, done }) => {
+        onProgress: ({ store, index, total, batchIndex, batchTotal, done }) => {
           const label = done
             ? `Done - ${standardizeProposals.length} proposal(s) to review below.`
-            : `Analyzing ${store} (${index + 1}/${total})...`;
+            : batchTotal > 1
+              ? `Analyzing ${store} (${index + 1}/${total}, batch ${batchIndex + 1}/${batchTotal})...`
+              : `Analyzing ${store} (${index + 1}/${total})...`;
           standardizeStatusEl.textContent = label;
           activitySetStatus(label);
         },

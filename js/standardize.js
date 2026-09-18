@@ -10,7 +10,8 @@
 import { chat, extractJson } from './ollama.js';
 import { standardizeNamesSystemPrompt, standardizeNamesUserPrompt } from './prompts.js';
 import { db } from './storage.js';
-import { numPredictBudget } from './tokens.js';
+import { estimateCallTokens, numPredictBudget } from './tokens.js';
+import { packIntoBatches } from './batching.js';
 
 const STORE_CONFIG = {
   characters: {
@@ -41,10 +42,29 @@ function toPromptItem(record, config) {
   };
 }
 
+// Splits a store's records into batches that each fit under the configured
+// fill target, same policy as extraction/translation batching (js/extraction.js,
+// js/translation.js) - unlike those, this pass has no per-chapter natural
+// unit, so without batching a large project (hundreds of characters/locations/
+// terms, each with accumulated evidence) becomes ONE call asking the model to
+// emit one giant, internally-consistent JSON array. Local/quantized models
+// reliably fail at that scale - either giving up early or trailing off before
+// finishing the JSON - which surfaced as a hard-to-diagnose JSON-parse error.
+function batchRecords(records, config, system, settings) {
+  const targetBudget = settings.contextBudget * (settings.batchFillTarget / 100);
+  return packIntoBatches(
+    records,
+    (batch) => estimateCallTokens({ system, prompt: standardizeNamesUserPrompt({ items: batch.map((r) => toPromptItem(r, config)) }) }),
+    targetBudget
+  );
+}
+
 // Runs the pass for a single store, returning only proposals that actually
 // differ from the current englishName/englishRendering - nothing here
-// writes to the database.
-async function proposeForStore(store, projectId, settings, onToken, signal) {
+// writes to the database. A batch that comes back refused or unparseable is
+// skipped (not thrown) so proposals already gathered from earlier batches/
+// stores survive - mirrors js/extraction.js's refusedEarly handling.
+async function proposeForStore(store, projectId, settings, onToken, onBatchProgress, signal) {
   const config = STORE_CONFIG[store];
   const records = await db.allByProject(store, projectId);
   if (records.length === 0) return [];
@@ -54,21 +74,41 @@ async function proposeForStore(store, projectId, settings, onToken, signal) {
     targetLanguage: settings.targetLanguage,
     entityType: store,
   });
-  const prompt = standardizeNamesUserPrompt({ items: records.map((r) => toPromptItem(r, config)) });
-  const { text } = await chat({ host: settings.ollamaHost, model: settings.model, system, prompt, onToken, numPredict: numPredictBudget({ system, prompt, contextBudget: settings.contextBudget }), signal });
-  const parsed = extractJson(text);
-  const proposals = parsed?.proposals || [];
+  const batches = batchRecords(records, config, system, settings);
+  const proposals = [];
 
-  return proposals
-    .map((p) => {
-      const record = records.find((r) => r[config.keyField] === p.key);
-      if (!record) return null;
+  for (let i = 0; i < batches.length; i++) {
+    if (signal?.aborted) break;
+    const batch = batches[i];
+    onBatchProgress?.({ batchIndex: i, batchTotal: batches.length });
+
+    const prompt = standardizeNamesUserPrompt({ items: batch.map((r) => toPromptItem(r, config)) });
+    const { text, refusedEarly } = await chat({ host: settings.ollamaHost, model: settings.model, system, prompt, onToken, numPredict: numPredictBudget({ system, prompt, contextBudget: settings.contextBudget }), signal });
+    if (refusedEarly) {
+      // chat() already cancelled the stream on a refusal-phrase match - text
+      // is partial and won't parse as JSON, so don't bother trying.
+      continue;
+    }
+    let parsed;
+    try {
+      parsed = extractJson(text);
+    } catch (err) {
+      // Malformed/incomplete JSON from this batch - skip it rather than
+      // losing every proposal already gathered from earlier batches/stores.
+      continue;
+    }
+
+    for (const p of parsed?.proposals || []) {
+      const record = batch.find((r) => r[config.keyField] === p.key);
+      if (!record) continue;
       const currentEnglish = record[config.targetField] || '';
       const proposedEnglish = (p.englishName || '').trim();
-      if (!proposedEnglish || proposedEnglish === currentEnglish) return null;
-      return { store, recordId: record.id, key: p.key, currentEnglish, proposedEnglish, reason: p.reason || '' };
-    })
-    .filter(Boolean);
+      if (!proposedEnglish || proposedEnglish === currentEnglish) continue;
+      proposals.push({ store, recordId: record.id, key: p.key, currentEnglish, proposedEnglish, reason: p.reason || '' });
+    }
+  }
+
+  return proposals;
 }
 
 // Runs the pass across characters/locations/terminology in turn, returning
@@ -79,8 +119,18 @@ export async function runStandardizeNames({ projectId, settings, onToken, onProg
     if (signal?.aborted) break;
     const store = STANDARDIZABLE_STORES[i];
     onProgress?.({ store, index: i, total: STANDARDIZABLE_STORES.length });
-    const proposals = await proposeForStore(store, projectId, settings, onToken, signal);
-    allProposals.push(...proposals);
+    try {
+      const proposals = await proposeForStore(
+        store, projectId, settings, onToken,
+        (batchInfo) => onProgress?.({ store, index: i, total: STANDARDIZABLE_STORES.length, ...batchInfo }),
+        signal
+      );
+      allProposals.push(...proposals);
+    } catch (err) {
+      if (err.name === 'AbortError') throw err;
+      // A store-level failure (e.g. a connectivity hiccup) shouldn't discard
+      // proposals already gathered from other stores - move on.
+    }
   }
   onProgress?.({ done: true, aborted: !!signal?.aborted });
   return allProposals;

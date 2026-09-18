@@ -37,8 +37,9 @@ export async function renderImportView(container, { onProjectReady }) {
         <ul class="chapter-list">
           ${existingProjects.map((p) => `
             <li>
-              <span>${escapeAttr(p.title)}${p.author ? ` <span class="muted">by ${escapeAttr(p.author)}</span>` : ''}</span>
+              <span class="project-title">${escapeAttr(p.title)}${p.author ? ` <span class="muted">by ${escapeAttr(p.author)}</span>` : ''}</span>
               <button type="button" class="open-project-btn" data-id="${p.id}">Open</button>
+              <button type="button" class="delete-project-btn" data-id="${p.id}">Delete</button>
             </li>`).join('')}
         </ul>
       </section>
@@ -75,6 +76,13 @@ export async function renderImportView(container, { onProjectReady }) {
 
   container.querySelectorAll('.open-project-btn').forEach((btn) => {
     btn.addEventListener('click', () => onProjectReady(btn.dataset.id));
+  });
+
+  container.querySelectorAll('.delete-project-btn').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      await db.deleteProject(btn.dataset.id);
+      renderImportView(container, { onProjectReady });
+    });
   });
 
   const importStatusEl = container.querySelector('#import-status');

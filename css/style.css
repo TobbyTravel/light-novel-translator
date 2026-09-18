@@ -66,6 +66,7 @@ table.bible-table { width: 100%; border-collapse: collapse; }
 .chapter-list { list-style: none; padding: 0; }
 .chapter-list li { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.25rem; }
 .chapter-list input[type="text"] { flex: 1; }
+.chapter-list .project-title { flex: 1; overflow-wrap: anywhere; }
 
 .status-untranslated { color: #999; }
 .status-translated { color: #2a9d4a; }

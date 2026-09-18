@@ -2,7 +2,7 @@ import { chat } from './ollama.js';
 import { translationSystemPrompt, translationUserPrompt } from './prompts.js';
 import { db } from './storage.js';
 import { flagChapter } from './refusal.js';
-import { loadBibleAsPlainObject } from './extraction.js';
+import { loadRawBibleData, buildBibleForChapters } from './extraction.js';
 import { estimateCallTokens, numPredictBudget } from './tokens.js';
 import { packIntoBatches } from './batching.js';
 import { joinChaptersWithMarkers, splitByMarkers } from './grouping.js';
@@ -20,13 +20,17 @@ function translationPrompt(bible, batch) {
 
 // Auto-batches consecutive chapters to fill settings.batchFillTarget% of the
 // context budget. Reserve is larger than extraction's (translated output is
-// roughly comparable to, sometimes longer than, source length).
-export function planTranslationBatches(chapters, bible, settings) {
+// roughly comparable to, sometimes longer than, source length). rawBible
+// (js/extraction.js's loadRawBibleData) is trimmed per candidate batch via
+// buildBibleForChapters so the estimate reflects what that batch will
+// actually send, not the whole-book bible.
+export function planTranslationBatches(chapters, rawBible, settings) {
   if (settings.chapterByChapter) return chapters.map((c) => [c]);
   const targetBudget = settings.contextBudget * (settings.batchFillTarget / 100);
   return packIntoBatches(
     chapters,
     (batch) => {
+      const bible = buildBibleForChapters(rawBible, batch);
       const system = translationSystemPrompt({
         sourceLanguage: settings.sourceLanguage,
         targetLanguage: settings.targetLanguage,
@@ -42,8 +46,8 @@ export function planTranslationBatches(chapters, bible, settings) {
 // fit the context budget. No per-batch approval gate - failures are marked
 // and left individually retryable.
 export async function runTranslation({ projectId, chapters, settings, onProgress, onChapterError, onToken, signal, startBatchIndex = 0 }) {
-  const bible = await loadBibleAsPlainObject(projectId);
-  const batches = planTranslationBatches(chapters, bible, settings);
+  const rawBible = await loadRawBibleData(projectId);
+  const batches = planTranslationBatches(chapters, rawBible, settings);
   if (startBatchIndex > 0) {
     await updateJob(projectId, { status: 'running', batchIndex: startBatchIndex, totalBatches: batches.length });
   } else {
@@ -53,6 +57,7 @@ export async function runTranslation({ projectId, chapters, settings, onProgress
   for (let b = startBatchIndex; b < batches.length; b++) {
     if (signal?.aborted) break;
     const batch = batches[b];
+    const bible = buildBibleForChapters(rawBible, batch);
     const grouped = batch.length > 1;
     const system = translationSystemPrompt({
       sourceLanguage: settings.sourceLanguage,
@@ -157,7 +162,8 @@ export async function translateBatch({ batch, bible, system, settings, onChapter
 // always a batch of one, regardless of the auto-batching fill target, so a
 // targeted fix stays scoped to just that chapter.
 export async function retranslateChapter({ projectId, chapter, settings }) {
-  const bible = await loadBibleAsPlainObject(projectId);
+  const rawBible = await loadRawBibleData(projectId);
+  const bible = buildBibleForChapters(rawBible, [chapter]);
   const system = translationSystemPrompt({
     sourceLanguage: settings.sourceLanguage,
     targetLanguage: settings.targetLanguage,

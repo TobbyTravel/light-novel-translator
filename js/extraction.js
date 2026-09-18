@@ -8,20 +8,64 @@ import { joinChaptersWithMarkers } from './grouping.js';
 import { startJob, updateJob, finishJob } from './jobs.js';
 import { flagChapter } from './refusal.js';
 
-// Serializes the current on-disk bible into the plain-object shape the
-// translation prompt expects (extraction no longer reads this back - see
-// js/prompts.js for why).
-export async function loadBibleAsPlainObject(projectId) {
+// Fetches the whole on-disk bible, unfiltered - one DB round-trip meant to
+// be called once per translation run, then reused across every batch via
+// buildBibleForChapters (below), which does the actual per-call trimming
+// synchronously with no further DB access.
+export async function loadRawBibleData(projectId) {
   const [characters, relationships, locations, terminology, timeline] = await Promise.all(
     ENTITY_STORES.map((name) => db.allByProject(name, projectId))
   );
   const synthesis = await db.get('synthesis', projectId);
+  return { characters, relationships, locations, terminology, timeline, synthesis };
+}
+
+// Characters kept regardless of whether they're evidenced in the current
+// batch - a reappearance via pronoun/nickname alone doesn't always produce a
+// fresh evidence quote, so the most-evidenced (likely main/recurring) cast
+// stays available even when not freshly re-evidenced in this batch.
+const ALWAYS_KEEP_TOP_CHARACTERS = 15;
+
+function evidencedInChapters(record, chapterIndexSet) {
+  return (record.evidence || []).some((e) => chapterIndexSet.has(e.chapterIndex));
+}
+
+// Trims the full bible down to what's relevant to translating this batch of
+// chapters. Unlike chapter text, the bible has no natural size ceiling - it
+// grows with the whole novel, not with any one call - so for a long book it
+// eventually exceeds any context budget regardless of chapter batching.
+// Characters/locations/terminology are kept only if evidenced in this
+// batch (plus the top-N safety net above); relationships are kept if either
+// side is a kept character; timeline is kept only up to this batch's
+// chapters (never beyond, matching the translation prompt's own
+// don't-spoil-the-future instruction - js/prompts.js).
+export function buildBibleForChapters(raw, chapters) {
+  const chapterIndexSet = new Set(chapters.map((c) => c.index));
+  const maxIndex = Math.max(...chapters.map((c) => c.index));
+
+  const topCharacterIds = new Set(
+    [...raw.characters]
+      .sort((a, b) => (b.evidence?.length || 0) - (a.evidence?.length || 0))
+      .slice(0, ALWAYS_KEEP_TOP_CHARACTERS)
+      .map((c) => c.id)
+  );
+  const characters = raw.characters.filter((c) => topCharacterIds.has(c.id) || evidencedInChapters(c, chapterIndexSet));
+  const relevantNames = new Set(characters.map((c) => c.sourceName));
+
+  const locations = raw.locations.filter((l) => evidencedInChapters(l, chapterIndexSet));
+  const terminology = raw.terminology.filter((t) => evidencedInChapters(t, chapterIndexSet));
+  const relationships = raw.relationships.filter((r) => relevantNames.has(r.characterA) || relevantNames.has(r.characterB));
+  const timeline = raw.timeline
+    .filter((t) => (t.chapterIndex ?? 0) <= maxIndex)
+    .sort((a, b) => (a.chapterIndex ?? 0) - (b.chapterIndex ?? 0));
+
+  const { synthesis } = raw;
   return {
     characters: characters.map(stripMeta),
     relationships: relationships.map(stripMeta),
     locations: locations.map(stripMeta),
     terminology: terminology.map(stripMeta),
-    timeline: timeline.map(stripMeta).sort((a, b) => (a.chapterIndex ?? 0) - (b.chapterIndex ?? 0)),
+    timeline: timeline.map(stripMeta),
     synthesis: synthesis ? { synopsis: synthesis.synopsis, characterArcs: synthesis.characterArcs, toneNotes: synthesis.toneNotes, foreshadowing: synthesis.foreshadowing } : null,
   };
 }

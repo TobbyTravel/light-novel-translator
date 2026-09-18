@@ -2,7 +2,7 @@ import { db } from '../storage.js';
 import { runTranslation, retranslateChapter, planTranslationBatches } from '../translation.js';
 import { translationSystemPrompt, translationUserPrompt } from '../prompts.js';
 import { estimateCallTokens, formatTokenCount } from '../tokens.js';
-import { loadBibleAsPlainObject } from '../extraction.js';
+import { loadRawBibleData, buildBibleForChapters } from '../extraction.js';
 import { joinChaptersWithMarkers } from '../grouping.js';
 import { renderRefusalPanel } from './refusal-panel.js';
 import { createEtaTracker } from '../eta.js';
@@ -38,10 +38,11 @@ export function renderTranslateView(container, { projectId, settings }) {
 
   async function renderList() {
     const chapters = (await db.allByProject('chapters', projectId)).sort((a, b) => a.index - b.index);
-    const bible = await loadBibleAsPlainObject(projectId);
-    const batches = planTranslationBatches(chapters, bible, settings);
+    const rawBible = await loadRawBibleData(projectId);
+    const batches = planTranslationBatches(chapters, rawBible, settings);
     let total = 0;
     const rows = batches.flatMap((batch, bIdx) => {
+      const bible = buildBibleForChapters(rawBible, batch);
       const grouped = batch.length > 1;
       const system = translationSystemPrompt({ sourceLanguage: settings.sourceLanguage, targetLanguage: settings.targetLanguage, grouped });
       const text = joinChaptersWithMarkers(batch);

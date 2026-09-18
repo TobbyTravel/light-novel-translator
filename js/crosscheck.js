@@ -82,8 +82,9 @@ export async function retryWithFallbackChain({ projectId, chapter, settings, kin
 // the actual persisted translatedText back as plain output text.
 async function runSingleTranslationAttempt({ projectId, chapter, settings }) {
   const { translationSystemPrompt } = await import('./prompts.js');
-  const { loadBibleAsPlainObject } = await import('./extraction.js');
-  const bible = await loadBibleAsPlainObject(projectId);
+  const { loadRawBibleData, buildBibleForChapters } = await import('./extraction.js');
+  const rawBible = await loadRawBibleData(projectId);
+  const bible = buildBibleForChapters(rawBible, [chapter]);
   const system = translationSystemPrompt({
     sourceLanguage: settings.sourceLanguage,
     targetLanguage: settings.targetLanguage,

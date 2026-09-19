@@ -140,6 +140,10 @@ export function defaultSettings() {
     // flagged by the refusal crosscheck (js/crosscheck.js) - never sent to
     // Ollama directly, only used to pick which model each retry attempt uses.
     fallbackModels: [],
+    // Off by default - streaming every token into the activity bar's live
+    // output pane is real per-token DOM/string churn over a long unattended
+    // run (see js/ui/activity.js). Opt in only when actively watching a run.
+    liveOutput: false,
   };
 }
 

@@ -23,6 +23,8 @@ export function renderSettingsView(container, { projectId, settings, onChange })
       <p class="muted">When running extraction/translation on all chapters, consecutive chapters are auto-batched into one call until they'd use this percentage of the context budget, leaving headroom for the model's own output.</p>
       <label class="row"><input type="checkbox" id="s-chapter-by-chapter" ${settings.chapterByChapter ? 'checked' : ''} /> Process one chapter per call (no auto-batching)</label>
       <p class="muted">Overrides the batch fill target above - every chapter gets its own extraction/translation call instead of being grouped to fill context.</p>
+      <label class="row"><input type="checkbox" id="s-live-output" ${settings.liveOutput ? 'checked' : ''} /> Show live model output while running</label>
+      <p class="muted">Off by default - streaming every token into the activity bar is extra DOM/string work over a long unattended run (a factor in tab memory growth on multi-hour runs). Turn on only while you're actively watching a run.</p>
       <label>Fallback models</label>
       <div id="s-fallback-list"></div>
       <button id="s-fallback-add" type="button">+ Add fallback model</button>
@@ -84,11 +86,12 @@ export function renderSettingsView(container, { projectId, settings, onChange })
     settings.contextBudget = Number(el('#s-context-budget').value) || 16384;
     settings.batchFillTarget = Number(el('#s-batch-fill').value) || 80;
     settings.chapterByChapter = el('#s-chapter-by-chapter').checked;
+    settings.liveOutput = el('#s-live-output').checked;
     await db.put('projects', { ...(await db.get('projects', projectId)), settings });
     onChange(settings);
   }
 
-  ['#s-host', '#s-model', '#s-source', '#s-target', '#s-context-budget', '#s-batch-fill'].forEach((sel) => {
+  ['#s-host', '#s-model', '#s-source', '#s-target', '#s-context-budget', '#s-batch-fill', '#s-live-output'].forEach((sel) => {
     el(sel).addEventListener('change', persist);
   });
 

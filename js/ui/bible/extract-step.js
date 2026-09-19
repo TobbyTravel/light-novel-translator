@@ -4,7 +4,7 @@ import { extractionSystemPrompt, extractionUserPrompt } from '../../prompts.js';
 import { estimateCallTokens, formatTokenCount } from '../../tokens.js';
 import { renderRefusalPanel } from '../refusal-panel.js';
 import { createEtaTracker } from '../../eta.js';
-import { activityStart, activitySetStatus, activityPushToken, activityFinish } from '../activity.js';
+import { activityStart, activitySetStatus, activityPushToken, activityFinish, setLiveOutputEnabled } from '../activity.js';
 import { getJob } from '../../jobs.js';
 
 function escapeHtml(str) {
@@ -85,6 +85,7 @@ export function renderExtractStep(container, { projectId, settings, refreshStepp
     const eta = createEtaTracker();
     const chapters = await db.allByProject('chapters', projectId);
     chapters.sort((a, b) => a.index - b.index);
+    setLiveOutputEnabled(settings.liveOutput);
     activityStart();
     const errors = [];
     await runExtraction({

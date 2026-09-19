@@ -1,7 +1,7 @@
 import { runAutoPipeline } from '../autorun.js';
 import { getJob } from '../jobs.js';
 import { createEtaTracker } from '../eta.js';
-import { activityStart, activitySetStatus, activityPushToken, activityFinish } from './activity.js';
+import { activityStart, activitySetStatus, activityPushToken, activityFinish, setLiveOutputEnabled } from './activity.js';
 import { computeStepStatuses } from './bible/step-status.js';
 import { renderStepper, BIBLE_STEPS } from './bible/stepper.js';
 import { renderExtractStep } from './bible/extract-step.js';
@@ -78,6 +78,7 @@ export function renderBibleView(container, { projectId, settings, step }) {
       // Best-effort only - not all browsers/contexts support this.
     }
 
+    setLiveOutputEnabled(settings.liveOutput);
     activityStart();
     const eta = createEtaTracker();
     await runAutoPipeline({

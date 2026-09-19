@@ -63,14 +63,20 @@ export function renderActivityBar(container, { projectId }) {
 
   function renderLiveRow() {
     if (!activityState.running && !activityState.liveText) return '';
-    return `
-      <div class="status-bar-row">
-        <span class="muted">${activityState.statusText}</span>
-      </div>
+    // liveText stays empty for the whole run when Settings > "Show live
+    // model output" is off (js/ui/activity.js) - skip the (otherwise
+    // permanently-empty) details panel in that case, keep just the status line.
+    const liveOutputPanel = activityState.liveText ? `
       <details class="live-output"${activityState.running ? ' open' : ''}>
         <summary>Live output</summary>
         <pre id="activity-live-text"></pre>
       </details>
+    ` : '';
+    return `
+      <div class="status-bar-row">
+        <span class="muted">${activityState.statusText}</span>
+      </div>
+      ${liveOutputPanel}
     `;
   }
 

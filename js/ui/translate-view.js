@@ -6,7 +6,7 @@ import { loadRawBibleData, buildBibleForChapters } from '../extraction.js';
 import { joinChaptersWithMarkers } from '../grouping.js';
 import { renderRefusalPanel } from './refusal-panel.js';
 import { createEtaTracker } from '../eta.js';
-import { activityStart, activitySetStatus, activityPushToken, activityFinish } from './activity.js';
+import { activityStart, activitySetStatus, activityPushToken, activityFinish, setLiveOutputEnabled } from './activity.js';
 import { getJob } from '../jobs.js';
 
 function escapeHtml(str) {
@@ -100,6 +100,7 @@ export function renderTranslateView(container, { projectId, settings }) {
     const originalTitle = document.title;
     const eta = createEtaTracker();
     const chapters = (await db.allByProject('chapters', projectId)).sort((a, b) => a.index - b.index);
+    setLiveOutputEnabled(settings.liveOutput);
     activityStart();
     let failed = 0;
     await runTranslation({

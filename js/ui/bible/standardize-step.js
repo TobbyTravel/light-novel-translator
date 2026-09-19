@@ -1,5 +1,5 @@
 import { runStandardizeNames, applyStandardNameProposal } from '../../standardize.js';
-import { activityStart, activitySetStatus, activityPushToken, activityFinish } from '../activity.js';
+import { activityStart, activitySetStatus, activityPushToken, activityFinish, setLiveOutputEnabled } from '../activity.js';
 
 function escapeHtml(str) {
   return String(str ?? '').replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
@@ -67,6 +67,7 @@ export function renderStandardizeStep(container, { projectId, settings }) {
     }
     const btn = e.currentTarget;
     btn.disabled = true;
+    setLiveOutputEnabled(settings.liveOutput);
     activityStart();
     try {
       standardizeProposals = await runStandardizeNames({

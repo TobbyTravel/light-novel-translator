@@ -1,7 +1,7 @@
 import { db } from '../../storage.js';
 import { runSynthesis, planSynthesisRun } from '../../synthesis.js';
 import { formatTokenCount } from '../../tokens.js';
-import { activityStart, activitySetStatus, activityPushToken, activityFinish } from '../activity.js';
+import { activityStart, activitySetStatus, activityPushToken, activityFinish, setLiveOutputEnabled } from '../activity.js';
 import { getJob } from '../../jobs.js';
 
 function escapeHtml(str) {
@@ -96,6 +96,7 @@ export function renderSynthesizeStep(container, { projectId, settings, refreshSt
     }
     e.target.disabled = true;
     await renderSynthesisPanel('Running...');
+    setLiveOutputEnabled(settings.liveOutput);
     activityStart();
     try {
       await runSynthesis({

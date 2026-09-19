@@ -8,8 +8,26 @@
 let state = { statusText: '', liveText: '', running: false };
 const listeners = new Set();
 
+// Off by default. Every caller wires onToken straight to activityPushToken
+// (see js/ui/translate-view.js and friends) regardless of whether the user
+// wants to see it, so a per-token full-text string copy + <pre> textContent
+// reflow (js/ui/activity-bar.js) would otherwise fire for every streamed
+// token of every batch - real cost over a multi-hour, hundreds-of-batches
+// run. Gating here, in the one shared sink, avoids touching every call site.
+let liveOutputEnabled = false;
+// Throttles the DOM-facing notify() while tokens are streaming so a long
+// completion doesn't repaint on every single token - state.liveText itself
+// is still kept current for whenever the next notify does fire.
+const LIVE_OUTPUT_THROTTLE_MS = 250;
+let lastTokenNotify = 0;
+
+export function setLiveOutputEnabled(enabled) {
+  liveOutputEnabled = !!enabled;
+}
+
 export function activityStart() {
   state = { statusText: 'Starting...', liveText: '', running: true };
+  lastTokenNotify = 0;
   notify();
 }
 
@@ -19,7 +37,11 @@ export function activitySetStatus(text) {
 }
 
 export function activityPushToken(_chunk, full) {
+  if (!liveOutputEnabled) return;
   state.liveText = full;
+  const now = Date.now();
+  if (now - lastTokenNotify < LIVE_OUTPUT_THROTTLE_MS) return;
+  lastTokenNotify = now;
   notify();
 }
 

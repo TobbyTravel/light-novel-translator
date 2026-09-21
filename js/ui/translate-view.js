@@ -21,6 +21,7 @@ export function renderTranslateView(container, { projectId, settings }) {
         <button id="run-translation" class="btn-primary">Translate all chapters</button>
         <button id="resume-translation" hidden>Resume interrupted run</button>
         <button id="stop-translation" hidden>Stop</button>
+        <label class="row"><input type="checkbox" id="skip-translated" /> Skip already-translated chapters</label>
       </div>
       <div id="chapter-status-list"></div>
       <div id="refusal-panel-translation"></div>
@@ -82,6 +83,7 @@ export function renderTranslateView(container, { projectId, settings }) {
 
   const runBtn = container.querySelector('#run-translation');
   const stopBtn = container.querySelector('#stop-translation');
+  const skipTranslatedCheckbox = container.querySelector('#skip-translated');
 
   async function startRun(startBatchIndex = 0) {
     const existingJob = await getJob(projectId);
@@ -99,7 +101,8 @@ export function renderTranslateView(container, { projectId, settings }) {
     };
     const originalTitle = document.title;
     const eta = createEtaTracker();
-    const chapters = (await db.allByProject('chapters', projectId)).sort((a, b) => a.index - b.index);
+    const allChapters = (await db.allByProject('chapters', projectId)).sort((a, b) => a.index - b.index);
+    const chapters = skipTranslatedCheckbox.checked ? allChapters.filter((c) => c.status !== 'translated') : allChapters;
     setLiveOutputEnabled(settings.liveOutput);
     activityStart();
     let failed = 0;
